@@ -4,15 +4,18 @@
 # Purpose : For a single site, read the master metadata workbook and pull
 #           together everything Stages 2-6 will need: boundary shapefile path,
 #           trial strip shapefile path, drone image dates/paths, satellite
-#           dates/paths, and field observation dates/paths.
+#           dates/paths, field observation dates/paths, and zone (soil type)
+#           polygons with real zone labels attached.
 #           Outputs one "inventory" tibble so gaps are visible before any
 #           spatial analysis starts.
 #
 # Inputs  : "H:/Output-1/0.Site-info/names of treatments per site 2025
-#            metadata and other info.xlsx"  -- sheet "file location etc"
-#           Sentinel-2 and drone image folders (see SITE CONFIG below)
+#            metadata and other info.xlsx"  -- sheets "file location etc",
+#            "zone_details"
+#           Sentinel-2, drone, and Planet image folders (see SITE CONFIG below)
 #
-# Outputs : site_inventory  (tibble, one row per date/source/variable)
+# Outputs : site_inventory     (tibble, one row per date/source/variable)
+#           zones_labelled     (sf polygons, zone code + real zone label)
 #
 # TO RUN A DIFFERENT SITE: change site_name in SITE CONFIG below. Everything
 # else in this script derives from that one value.
@@ -22,6 +25,7 @@ library(dplyr)
 library(readxl)
 library(stringr)
 library(readr)
+library(sf)
 
 
 # ============================== SITE CONFIG =================================
@@ -39,6 +43,22 @@ planet_folder <- file.path(base_path, site_name,
 
 pipeline_output_base <- "H:/Output-1/Jackie notes processing etc/Drone_Vs_Satellite"
 output_folder         <- file.path(pipeline_output_base, site_name)
+
+# Zone shapefile's column name is site-specific and NOT reliable from the
+# metadata sheet ("zone names clm heading name" field has drifted out of
+# sync with the actual shapefiles) - hardcoded lookup instead, carried over
+# from the NDVI Viewer app's existing site handling. See DECISIONS_LOG.
+zone_field <- case_when(
+  site_name == "1.Walpeup_MRS125"             ~ "gridcode",
+  site_name == "2.Crystal_Brook_Brians_House"  ~ "cluster",
+  site_name == "3.Wynarka_Mervs_West"          ~ "fcl_mdl",
+  site_name == "4.Wharminda_Woodys"            ~ "fcl_mdl",
+  site_name == "5.Walpeup_Gums"                ~ "cluster3",
+  site_name == "6.Crystal_Brook_Randals"       ~ "cluster",
+  site_name == "7.Wharminda_Bonanza"           ~ "cluster",  # "DN"?
+  site_name == "8.Wynarka_Tanks"               ~ "zone",
+  TRUE ~ NA_character_
+)
 # =============================================================================
 
 
@@ -133,13 +153,47 @@ field_inventory <- field_dates %>%
 
 field_inventory
 
+# ---- 4b. Zone shapefile: read polygons, attach real zone labels -----------
+# Zone codes (1, 2, 3...) mean different things at different sites - labels
+# come from metadata ("zone_details" sheet), joined onto the shapefile so
+# downstream scripts get real names (e.g. "Swale") not just numeric codes.
+
+zones_path <- site_files %>%
+  filter(variable == "location of zone shp") %>%
+  pull(file_path)
+
+zones_raw <- st_read(file.path(base_path, site_name, zones_path))
+
+zone_labels <- read_excel(metadata_path, sheet = "zone_details") %>%
+  filter(Site == site_name) %>%
+  select(zone_code = `zone names`, zone_label = `zone label names`) %>%
+  mutate(zone_code = as.character(zone_code),
+         zone_label = str_extract(zone_label, "(?<=\\=).*"))
+
+zones_labelled <- zones_raw %>%
+  rename(zone_code = !!zone_field) %>%
+  mutate(zone_code = as.character(zone_code)) %>%
+  left_join(zone_labels, by = "zone_code") %>%
+  select(zone_code, zone_label)
+
+zones_labelled %>% st_drop_geometry() %>% distinct()
+
+# Record the zone shapefile itself in the inventory (no date - it's a static
+# layer, not a time-series observation), consistent with how other sources
+# are tracked.
+zone_inventory <- tibble(
+  date = as.Date(NA), source = "zone", variable = "zone_shapefile",
+  file_name = basename(zones_path), file_path = zones_path
+)
 
 # ---- 5. Combine all sources into one Site 1 inventory ----------------------
-site_inventory <- bind_rows(satellite_inventory, drone_inventory, planet_inventory, field_inventory) %>%
+site_inventory <- bind_rows(satellite_inventory, drone_inventory, planet_inventory,
+                            field_inventory, zone_inventory) %>%
   mutate(site = site_name) %>%
   arrange(date)
 
 site_inventory
+
 # ---- 6. Quick visual check: timeline of all observation dates -------------
 library(ggplot2)
 
@@ -151,9 +205,9 @@ ggplot(site_inventory %>% filter(!is.na(date)),
   theme_minimal() +
   theme(legend.position = "none")
 
-
-# ---- 7. Save the inventory for use by downstream scripts -------------------
+# ---- 7. Save the inventory + zone polygons for use by downstream scripts ---
 if (!dir.exists(output_folder)) dir.create(output_folder, recursive = TRUE)
 
 write_csv(site_inventory, file.path(output_folder, paste0(site_name, "_site_inventory_script1.csv")))
 saveRDS(site_inventory,  file.path(output_folder, paste0(site_name, "_site_inventory_script1.rds")))
+saveRDS(zones_labelled,  file.path(output_folder, paste0(site_name, "_zones_labelled_script1.rds")))
