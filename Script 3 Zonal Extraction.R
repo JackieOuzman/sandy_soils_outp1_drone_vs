@@ -1,20 +1,25 @@
 # =============================================================================
 # Script 3: Zonal Extraction
 # -----------------------------------------------------------------------------
-# Purpose : For each strip polygon (treatment), extract NDVI zonal statistics
-#           (mean, sd, n_pixels) per date, for satellite and drone. Drone is
-#           kept at native resolution per strip (not aggregated, unlike
+# Purpose : Extract NDVI zonal statistics (mean, sd, n_pixels) per date, for
+#           satellite and drone, at three levels:
+#             Level 1 - per strip (treatment only)
+#             Level 2 - per zone (soil type only)
+#             Level 3 - per strip x zone intersection (treatment within zone)
+#           Drone is kept at native resolution (not aggregated, unlike
 #           Script 2's paddock-level QC - see DECISIONS_LOG) since preserving
 #           fine within-strip detail is the whole point of testing drone's
 #           added value at sub-paddock scale.
 #
 # Inputs  : {site_name}_site_inventory_script1.rds
 #           {site_name}_raster_qc_script2.rds
+#           {site_name}_zones_labelled_script1.rds
 #           trial.plan shapefile (strip polygons) - path from metadata
 #           treatment names metadata (per-site treatment codes/labels)
 #
-# Outputs : {site_name}_zonal_stats_script3.csv/.rds
-#           (one row per strip, per date, per source)
+# Outputs : {site_name}_zonal_stats_script3.csv/.rds            (Level 1)
+#           {site_name}_zone_zonal_stats_script3.csv/.rds       (Level 2)
+#           {site_name}_strip_zone_zonal_stats_script3.csv/.rds (Level 3)
 #
 # TO RUN A DIFFERENT SITE: change site_name in SITE CONFIG below.
 # =============================================================================
@@ -146,7 +151,7 @@ drone_zonal <- site_inventory %>%
 nrow(drone_zonal)   # should be 2 dates x 8 strips = 16
 drone_zonal %>% distinct(date) %>% nrow()  # sanity check: 2 unique dates
 
-# ---- 8. Combine satellite + drone zonal stats, save for Script 4 ----------
+# ---- 8. Combine satellite + drone zonal stats (Level 1: treatment only) ---
 
 zonal_stats <- bind_rows(satellite_zonal, drone_zonal) %>%
   arrange(date, plot_order)
@@ -155,3 +160,106 @@ zonal_stats
 
 write_csv(zonal_stats, file.path(output_folder, paste0(site_name, "_zonal_stats_script3.csv")))
 saveRDS(zonal_stats,  file.path(output_folder, paste0(site_name, "_zonal_stats_script3.rds")))
+
+
+# =============================================================================
+# ZONE ADDITIONS BELOW - Level 2 (zone only) and Level 3 (strip x zone)
+# =============================================================================
+
+# ---- 9. Load zones from Script 1, check CRS/geometry before intersecting --
+
+zones_labelled <- readRDS(file.path(output_folder, paste0(site_name, "_zones_labelled_script1.rds")))
+
+st_crs(strips_clean) == st_crs(zones_labelled)   # should be TRUE
+st_is_valid(strips_clean) %>% all()               # should be TRUE
+st_is_valid(zones_labelled) %>% all()             # should be TRUE
+
+# If either validity check is FALSE, run this before continuing:
+# strips_clean   <- st_make_valid(strips_clean)
+# zones_labelled <- st_make_valid(zones_labelled)
+# If the CRS check is FALSE, run this before continuing:
+# zones_labelled <- st_transform(zones_labelled, st_crs(strips_clean))
+
+
+# ---- 10. Level 2: NDVI per zone (ignoring treatment) -----------------------
+# Same method as Section 5, just pointed at zones instead of strips. Tells us
+# how much NDVI variation is driven by soil type alone.
+
+extract_zonal_zone <- function(file_path, date, source, zones) {
+  r <- rast(file_path)
+  NAflag(r) <- 0
+  
+  exact_extract(r, zones, fun = c("mean", "stdev", "count")) %>%
+    bind_cols(zones %>% st_drop_geometry() %>% select(zone_code, zone_label)) %>%
+    mutate(date = date, source = source)
+}
+
+zone_zonal_satellite <- site_inventory %>%
+  filter(source == "satellite") %>%
+  rowwise() %>%
+  reframe(extract_zonal_zone(file_path, date, source, zones_labelled)) %>%
+  ungroup()
+
+zone_zonal_drone <- site_inventory %>%
+  filter(source == "drone") %>%
+  rowwise() %>%
+  reframe(extract_zonal_zone(file_path, date, source, zones_labelled)) %>%
+  ungroup()
+
+zone_zonal <- bind_rows(zone_zonal_satellite, zone_zonal_drone)
+
+zone_zonal %>% filter(source == "drone")  # quick look: NDVI by zone, 2 drone dates
+
+write_csv(zone_zonal, file.path(output_folder, paste0(site_name, "_zone_zonal_stats_script3.csv")))
+saveRDS(zone_zonal,  file.path(output_folder, paste0(site_name, "_zone_zonal_stats_script3.rds")))
+
+
+# ---- 11. Level 3: intersect strips with zones (strip x zone polygons) -----
+# A strip crossing 3 zones becomes 3 separate polygons, each tagged with both
+# its treatment AND its zone. Tiny sliver intersections are dropped as noise.
+
+zones_labelled <- st_make_valid(zones_labelled)
+
+strip_zone <- st_intersection(strips_clean, zones_labelled) %>%
+  mutate(area_m2 = as.numeric(st_area(.))) %>%
+  filter(area_m2 > 5)   # drop slivers under 5 sqm - adjust if needed once we see the data
+
+as.data.frame(strip_zone %>% st_drop_geometry() %>% count(treat, zone_label))
+
+
+# ---- 12. Level 3 extraction: NDVI per strip x zone polygon -----------------
+
+extract_zonal_stripzone <- function(file_path, date, source, strip_zone) {
+  r <- rast(file_path)
+  NAflag(r) <- 0
+  
+  exact_extract(r, strip_zone, fun = c("mean", "stdev", "count")) %>%
+    bind_cols(strip_zone %>% st_drop_geometry() %>%
+                select(plot, treat, treatment_name, plot_order, zone_code, zone_label)) %>%
+    mutate(date = date, source = source)
+}
+
+stripzone_zonal_satellite <- site_inventory %>%
+  filter(source == "satellite") %>%
+  rowwise() %>%
+  reframe(extract_zonal_stripzone(file_path, date, source, strip_zone)) %>%
+  ungroup()
+
+stripzone_zonal_drone <- site_inventory %>%
+  filter(source == "drone") %>%
+  rowwise() %>%
+  reframe(extract_zonal_stripzone(file_path, date, source, strip_zone)) %>%
+  ungroup()
+
+strip_zone_zonal_stats <- bind_rows(stripzone_zonal_satellite, stripzone_zonal_drone) %>%
+  arrange(date, plot_order, zone_label)
+
+strip_zone_zonal_stats %>% filter(source == "drone")  # check: treatment split WITHIN each zone
+
+
+# ---- 13. Save Level 3 output -----------------------------------------------
+
+write_csv(strip_zone_zonal_stats,
+          file.path(output_folder, paste0(site_name, "_strip_zone_zonal_stats_script3.csv")))
+saveRDS(strip_zone_zonal_stats,
+        file.path(output_folder, paste0(site_name, "_strip_zone_zonal_stats_script3.rds")))
