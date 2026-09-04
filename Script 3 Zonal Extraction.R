@@ -1,25 +1,38 @@
 # =============================================================================
 # Script 3: Zonal Extraction
 # -----------------------------------------------------------------------------
-# Purpose : Extract NDVI zonal statistics (mean, sd, n_pixels) per date, for
-#           satellite and drone, at three levels:
+# Purpose : Extract NDVI and NDRE zonal statistics (mean, sd, n_pixels) per
+#           date, at three levels:
 #             Level 1 - per strip (treatment only)
 #             Level 2 - per zone (soil type only)
 #             Level 3 - per strip x zone intersection (treatment within zone)
+#           Satellite: both NDVI (pre-made file) and NDRE (calculated from
+#           the raw 10-band stack's nbart_nir_1/nbart_red_edge_1 - see
+#           Script 1's raw_path, Script 2). Drone: NDVI only - no red-edge
+#           band available in the single-band drone product, so NDRE
+#           columns are NA for all drone rows.
+#           exact_extract() names columns differently depending on whether
+#           1 layer (drone: plain mean/stdev/count) or 2 layers (satellite:
+#           mean.NDVI/mean.NDRE etc.) go in - standardise_index_cols()
+#           aligns these so satellite and drone rows combine cleanly.
 #           Drone is kept at native resolution (not aggregated, unlike
 #           Script 2's paddock-level QC - see DECISIONS_LOG) since preserving
 #           fine within-strip detail is the whole point of testing drone's
 #           added value at sub-paddock scale.
 #
-# Inputs  : {site_name}_site_inventory_script1.rds
+# Inputs  : {site_name}_site_inventory_script1.rds  (satellite rows need
+#           both file_path [NDVI] and raw_path [10-band stack, for NDRE])
 #           {site_name}_raster_qc_script2.rds
 #           {site_name}_zones_labelled_script1.rds
 #           trial.plan shapefile (strip polygons) - path from metadata
 #           treatment names metadata (per-site treatment codes/labels)
 #
-# Outputs : {site_name}_zonal_stats_script3.csv/.rds            (Level 1)
-#           {site_name}_zone_zonal_stats_script3.csv/.rds       (Level 2)
-#           {site_name}_strip_zone_zonal_stats_script3.csv/.rds (Level 3)
+# Outputs : {site_name}_zonal_stats_script3.csv/.rds            (Level 1, NDVI+NDRE)
+#           {site_name}_zone_zonal_stats_script3.csv/.rds       (Level 2, NDVI+NDRE)
+#           {site_name}_strip_zone_zonal_stats_script3.csv/.rds (Level 3, NDVI+NDRE)
+#           Columns: mean.NDVI, mean.NDRE, stdev.NDVI, stdev.NDRE, count.NDVI,
+#           count.NDRE (NDRE columns are NA for drone rows) plus ID columns
+#           for that level.
 #
 # TO RUN A DIFFERENT SITE: change site_name in SITE CONFIG below.
 # =============================================================================
@@ -77,6 +90,44 @@ strips_clean <- strips %>%
             by = "treat")
 
 
+# ---- 3b. Function: build index raster(s) per source ------------------------
+# Drone: NDVI only (single band, no red-edge available - see Script 2).
+# Satellite: NDVI and NDRE as a named 2-layer stack (NDRE calculated from
+# the raw 10-band stack's nbart_nir_1/nbart_red_edge_1 - see Script 1's
+# raw_path). The 0-value no-data convention is ASSUMED to apply to the raw
+# stack too, not independently verified (see DECISIONS_LOG).
+
+build_index_raster <- function(file_path, raw_path, source) {
+  ndvi_r <- rast(file_path)
+  NAflag(ndvi_r) <- 0
+  
+  if (source == "satellite") {
+    raw_r  <- rast(raw_path)
+    ndre_r <- (raw_r[["nbart_nir_1"]] - raw_r[["nbart_red_edge_1"]]) /
+      (raw_r[["nbart_nir_1"]] + raw_r[["nbart_red_edge_1"]])
+    NAflag(ndre_r) <- 0
+    stack <- c(ndvi_r, ndre_r)
+    names(stack) <- c("NDVI", "NDRE")
+    return(stack)
+  }
+  
+  names(ndvi_r) <- "NDVI"
+  ndvi_r
+}
+
+# exact_extract() names columns differently for 1-layer (plain mean/stdev/
+# count, from drone) vs 2-layer (mean.NDVI/mean.NDRE etc., from satellite)
+# input. Standardise to the 2-layer naming so satellite and drone rows can
+# be combined cleanly - drone's NDRE columns become NA.
+standardise_index_cols <- function(df) {
+  if ("mean" %in% names(df)) {
+    df <- df %>%
+      rename(mean.NDVI = mean, stdev.NDVI = stdev, count.NDVI = count) %>%
+      mutate(mean.NDRE = NA_real_, stdev.NDRE = NA_real_, count.NDRE = NA_real_)
+  }
+  df
+}
+
 # ---- 4. Test zonal extraction on ONE satellite date first -----------------
 # Proves the method works before looping over every date/source.
 
@@ -99,11 +150,11 @@ zonal_test
 
 # ---- 5. Loop zonal extraction across every satellite date -----------------
 
-extract_zonal <- function(file_path, date, source, strips) {
-  r <- rast(file_path)
-  NAflag(r) <- 0
+extract_zonal <- function(file_path, raw_path, date, source, strips) {
+  idx <- build_index_raster(file_path, raw_path, source)
   
-  exact_extract(r, strips, fun = c("mean", "stdev", "count")) %>%
+  exact_extract(idx, strips, fun = c("mean", "stdev", "count")) %>%
+    standardise_index_cols() %>%
     bind_cols(strips %>% st_drop_geometry() %>%
                 select(plot, treat, treatment_name, plot_order)) %>%
     mutate(date = date, source = source)
@@ -112,12 +163,13 @@ extract_zonal <- function(file_path, date, source, strips) {
 satellite_zonal <- site_inventory %>%
   filter(source == "satellite") %>%
   rowwise() %>%
-  reframe(extract_zonal(file_path, date, source, strips_clean)) %>%
+  reframe(extract_zonal(file_path, raw_path, date, source, strips_clean)) %>%
   ungroup()
 
 nrow(satellite_zonal)   # should be 34 dates x 8 strips = 272
 satellite_zonal %>% distinct(date) %>% nrow()  # sanity check: 34 unique dates
 
+names(satellite_zonal)
 
 # ---- 6. Test drone zonal extraction on ONE date first ----------------------
 
@@ -145,7 +197,7 @@ zonal_drone_test
 drone_zonal <- site_inventory %>%
   filter(source == "drone") %>%
   rowwise() %>%
-  reframe(extract_zonal(file_path, date, source, strips_clean)) %>%
+  reframe(extract_zonal(file_path, raw_path, date, source, strips_clean)) %>%
   ungroup()
 
 nrow(drone_zonal)   # should be 2 dates x 8 strips = 16
@@ -185,11 +237,11 @@ st_is_valid(zones_labelled) %>% all()             # should be TRUE
 # Same method as Section 5, just pointed at zones instead of strips. Tells us
 # how much NDVI variation is driven by soil type alone.
 
-extract_zonal_zone <- function(file_path, date, source, zones) {
-  r <- rast(file_path)
-  NAflag(r) <- 0
+extract_zonal_zone <- function(file_path, raw_path, date, source, zones) {
+  idx <- build_index_raster(file_path, raw_path, source)
   
-  exact_extract(r, zones, fun = c("mean", "stdev", "count")) %>%
+  exact_extract(idx, zones, fun = c("mean", "stdev", "count")) %>%
+    standardise_index_cols() %>%
     bind_cols(zones %>% st_drop_geometry() %>% select(zone_code, zone_label)) %>%
     mutate(date = date, source = source)
 }
@@ -197,14 +249,16 @@ extract_zonal_zone <- function(file_path, date, source, zones) {
 zone_zonal_satellite <- site_inventory %>%
   filter(source == "satellite") %>%
   rowwise() %>%
-  reframe(extract_zonal_zone(file_path, date, source, zones_labelled)) %>%
+  reframe(extract_zonal_zone(file_path, raw_path, date, source, zones_labelled)) %>%
   ungroup()
 
 zone_zonal_drone <- site_inventory %>%
   filter(source == "drone") %>%
   rowwise() %>%
-  reframe(extract_zonal_zone(file_path, date, source, zones_labelled)) %>%
+  reframe(extract_zonal_zone(file_path, raw_path, date, source, zones_labelled)) %>%
   ungroup()
+
+
 
 zone_zonal <- bind_rows(zone_zonal_satellite, zone_zonal_drone)
 
@@ -229,11 +283,11 @@ as.data.frame(strip_zone %>% st_drop_geometry() %>% count(treat, zone_label))
 
 # ---- 12. Level 3 extraction: NDVI per strip x zone polygon -----------------
 
-extract_zonal_stripzone <- function(file_path, date, source, strip_zone) {
-  r <- rast(file_path)
-  NAflag(r) <- 0
+extract_zonal_stripzone <- function(file_path, raw_path, date, source, strip_zone) {
+  idx <- build_index_raster(file_path, raw_path, source)
   
-  exact_extract(r, strip_zone, fun = c("mean", "stdev", "count")) %>%
+  exact_extract(idx, strip_zone, fun = c("mean", "stdev", "count")) %>%
+    standardise_index_cols() %>%
     bind_cols(strip_zone %>% st_drop_geometry() %>%
                 select(plot, treat, treatment_name, plot_order, zone_code, zone_label)) %>%
     mutate(date = date, source = source)
@@ -242,14 +296,16 @@ extract_zonal_stripzone <- function(file_path, date, source, strip_zone) {
 stripzone_zonal_satellite <- site_inventory %>%
   filter(source == "satellite") %>%
   rowwise() %>%
-  reframe(extract_zonal_stripzone(file_path, date, source, strip_zone)) %>%
+  reframe(extract_zonal_stripzone(file_path, raw_path, date, source, strip_zone)) %>%
   ungroup()
 
 stripzone_zonal_drone <- site_inventory %>%
   filter(source == "drone") %>%
   rowwise() %>%
-  reframe(extract_zonal_stripzone(file_path, date, source, strip_zone)) %>%
+  reframe(extract_zonal_stripzone(file_path, raw_path, date, source, strip_zone)) %>%
   ungroup()
+
+
 
 strip_zone_zonal_stats <- bind_rows(stripzone_zonal_satellite, stripzone_zonal_drone) %>%
   arrange(date, plot_order, zone_label)
@@ -263,3 +319,18 @@ write_csv(strip_zone_zonal_stats,
           file.path(output_folder, paste0(site_name, "_strip_zone_zonal_stats_script3.csv")))
 saveRDS(strip_zone_zonal_stats,
         file.path(output_folder, paste0(site_name, "_strip_zone_zonal_stats_script3.rds")))
+
+
+
+# 1. Confirm drone has the same column set, with NDRE as NA
+names(drone_zonal)
+drone_zonal %>% select(mean.NDVI, mean.NDRE, stdev.NDRE, count.NDRE) %>% head()
+
+# 2. Row counts still check out
+nrow(satellite_zonal)   # expect 272
+nrow(drone_zonal)       # expect 16
+nrow(zone_zonal)        # expect 32 x 2? actually check whatever your zone-level total should be
+nrow(strip_zone_zonal_stats)  # expect 288 (34 sat + 2 drone) x 3 zones? check against what Level 3 was before
+
+# 3. NDVI vs NDRE relationship for a few satellite rows
+satellite_zonal %>% filter(date == min(date)) %>% select(treat, mean.NDVI, mean.NDRE)

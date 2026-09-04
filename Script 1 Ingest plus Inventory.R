@@ -4,8 +4,9 @@
 # Purpose : For a single site, read the master metadata workbook and pull
 #           together everything Stages 2-6 will need: boundary shapefile path,
 #           trial strip shapefile path, drone image dates/paths, satellite
-#           dates/paths, field observation dates/paths, and zone (soil type)
-#           polygons with real zone labels attached.
+#           dates/paths (NDVI file + raw 10-band stack for NDRE), field
+#           observation dates/paths, and zone (soil type) polygons with real
+#           zone labels attached.
 #           Outputs one "inventory" tibble so gaps are visible before any
 #           spatial analysis starts.
 #
@@ -14,7 +15,10 @@
 #            "zone_details"
 #           Sentinel-2, drone, and Planet image folders (see SITE CONFIG below)
 #
-# Outputs : site_inventory     (tibble, one row per date/source/variable)
+# Outputs : site_inventory     (tibble, one row per date/source/variable;
+#           satellite rows include both file_path [pre-made NDVI] and
+#           raw_path [10-band stack, needed for NDRE]; Planet rows include
+#           mask_path [udm2])
 #           zones_labelled     (sf polygons, zone code + real zone label)
 #
 # TO RUN A DIFFERENT SITE: change site_name in SITE CONFIG below. Everything
@@ -68,19 +72,43 @@ site_files <- read_excel(metadata_path, sheet = "file location etc") %>%
   select(Site, variable, file_name = `file name`, file_path = `file path`,
          other_details = `other details`)
 
-# ---- 2. Satellite inventory: list NDVI tifs, parse date from filename -----
-satellite_inventory <- tibble(
+# ---- 2. Satellite inventory: list NDVI tifs + raw 10-band stack, by date --
+# raw_path (the "_10m.tif" file WITHOUT "NDVI" in the name) is needed for
+# NDRE, which requires the red-edge band - not present in the pre-made NDVI
+# file. Matched to the NDVI file by date rather than assumed to always
+# exist, since a missing raw stack for a given date is a real possibility
+# worth catching rather than silently producing NA downstream.
+
+satellite_ndvi_files <- tibble(
   file_path = list.files(sentinel_folder, pattern = "_NDVI_10m\\.tif$",
                          full.names = TRUE)
 ) %>%
   mutate(
     file_name = basename(file_path),
-    date      = as.Date(str_extract(file_name, "\\d{4}-\\d{2}-\\d{2}")),
+    date      = as.Date(str_extract(file_name, "\\d{4}-\\d{2}-\\d{2}"))
+  )
+
+satellite_raw_files <- tibble(
+  raw_path = list.files(sentinel_folder, pattern = "_10m\\.tif$", full.names = TRUE)
+) %>%
+  filter(!str_detect(raw_path, "NDVI")) %>%
+  mutate(
+    raw_name = basename(raw_path),
+    date     = as.Date(str_extract(raw_name, "\\d{4}-\\d{2}-\\d{2}"))
+  )
+
+satellite_inventory <- satellite_ndvi_files %>%
+  left_join(satellite_raw_files %>% select(date, raw_path), by = "date") %>%
+  mutate(
     source    = "satellite",
     variable  = "NDVI"
   ) %>%
-  select(date, source, variable, file_name, file_path) %>%
+  select(date, source, variable, file_name, file_path, raw_path) %>%
   arrange(date)
+
+# Check every NDVI date has a matching raw stack - flag if not, rather than
+# silently carrying an NA raw_path into downstream NDRE calculations
+sum(is.na(satellite_inventory$raw_path))
 
 # ---- 3. Drone inventory: list NDVI tifs, parse date from filename ---------
 # NOTE: swap for read_excel() + filter(Site == site_name) once the "Drone

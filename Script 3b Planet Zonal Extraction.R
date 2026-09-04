@@ -1,23 +1,30 @@
 # =============================================================================
 # Script 3b: Planet Zonal Extraction
 # -----------------------------------------------------------------------------
-# Purpose : Planet-specific equivalent of Script 3. Calculates NDVI from
-#           Planet's Red/NIR bands and applies the udm2 clear-mask (see
-#           Script 2b), then runs the SAME three-level zonal extraction as
-#           Script 3 (treatment, zone, strip x zone) - reusing identical
-#           logic, just with a different raster-preparation step since
-#           Planet doesn't arrive as ready-made NDVI like drone/satellite.
+# Purpose : Planet-specific equivalent of Script 3. Calculates NDVI and NDRE
+#           from Planet's Red/NIR/RedEdge bands and applies the udm2
+#           clear-mask (see Script 2b), then runs the SAME three-level
+#           zonal extraction as Script 3 (treatment, zone, strip x zone) -
+#           reusing identical logic, just with a different raster-
+#           preparation step since Planet doesn't arrive as ready-made
+#           indices like drone/satellite.
+#           Dates flagged as excluded_cloud in Script 2b (>30% masked
+#           pixels, matching Sentinel-2's whole-scene exclusion threshold)
+#           are filtered out before extraction begins.
 #           Rebuilds strips_clean/zones_labelled/strip_zone fresh (these
 #           were not saved as objects by Script 3 - only their resulting
 #           stats tables were).
 #
 # Inputs  : {site_name}_site_inventory_script1.rds
+#           {site_name}_planet_raster_qc_script2b.rds  (for excluded_cloud flag)
 #           {site_name}_zones_labelled_script1.rds
 #           trial.plan shapefile + treatment names metadata
 #
-# Outputs : {site_name}_planet_zonal_stats_script3b.csv/.rds            (Level 1)
-#           {site_name}_planet_zone_zonal_stats_script3b.csv/.rds       (Level 2)
-#           {site_name}_planet_strip_zone_zonal_stats_script3b.csv/.rds (Level 3)
+# Outputs : {site_name}_planet_zonal_stats_script3b.csv/.rds            (Level 1, NDVI+NDRE)
+#           {site_name}_planet_zone_zonal_stats_script3b.csv/.rds       (Level 2, NDVI+NDRE)
+#           {site_name}_planet_strip_zone_zonal_stats_script3b.csv/.rds (Level 3, NDVI+NDRE)
+#           Columns per level: mean.NDVI, mean.NDRE, stdev.NDVI, stdev.NDRE,
+#           count.NDVI, count.NDRE (plus ID columns for that level)
 #
 # TO RUN A DIFFERENT SITE: change site_name in SITE CONFIG below.
 # =============================================================================

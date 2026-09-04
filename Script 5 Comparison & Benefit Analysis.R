@@ -1,20 +1,30 @@
 # =============================================================================
 # Script 5: Comparison & Benefit Analysis
 # -----------------------------------------------------------------------------
-# Purpose : Job A - test whether treatment differences in NDVI are
+# Purpose : Job A - test whether treatment differences in NDVI AND NDRE are
 #           statistically real, accounting for zone (soil type) as a
 #           blocking factor - the trial design is a randomized block design
 #           (8 treatments x 3 zones, one strip-zone piece per combination),
 #           analysed with the classic additive ANOVA for this design
 #           (treatment + zone, residual = the treatment x zone interaction,
 #           standard when there's no true replication within each cell).
-#           Job B (relating NDVI to field ground truth) comes after - needs
-#           field data extracted from Excel first, not yet done.
+#           Run separately per date/source/metric. Drone has no NDRE (see
+#           Script 2/3) - those combinations are dropped before the ANOVA
+#           runs (no data to test), rather than causing an error.
+#           Job B (relating NDVI/NDRE to field ground truth) comes after -
+#           needs field data extracted from Excel first, not yet done.
 #
-# Inputs  : {site_name}_stripzone_matched_drone_satellite_script4.rds
+# Inputs  : {site_name}_strip_zone_zonal_stats_script3.rds       (sat+drone, NDVI+NDRE)
+#           {site_name}_planet_strip_zone_zonal_stats_script3b.rds (planet, NDVI+NDRE)
+#           metadata workbook, sheet "seasons" (sowing/harvest dates for the plot)
 #
 # Outputs : {site_name}_anova_results_script5.csv/.rds
-#           (one row per date/source: treatment effect F-stat, p-value)
+#           (one row per date/source/metric: treatment effect F-stat, p-value,
+#           neg_log10_p)
+#           {site_name}_anova_trend_script5.png
+#           (faceted by metric: NDVI, NDRE)
+#           {site_name}_drone_satellite_fstat_summary_script5.csv/.rds
+#           (NDVI only - drone has no matching NDRE data)
 #
 # TO RUN A DIFFERENT SITE: change site_name in SITE CONFIG below.
 # =============================================================================
@@ -36,10 +46,18 @@ strip_zone_zonal_stats  <- readRDS(file.path(output_folder, paste0(site_name, "_
 planet_strip_zone_zonal <- readRDS(file.path(output_folder, paste0(site_name, "_planet_strip_zone_zonal_stats_script3b.rds")))
 
 # ---- 2. Combine into one long table: one row per plot x zone x source x date
+# x metric (NDVI/NDRE). Drone has no NDRE (all NA) - those rows are dropped
+# before the ANOVA runs, so drone/NDRE simply doesn't appear in the results
+# rather than causing an error.
+
+
 long_data <- bind_rows(
-  strip_zone_zonal_stats %>% select(plot, treat, zone_code, zone_label, date, source, mean_ndvi = mean),
-  planet_strip_zone_zonal %>% select(plot, treat, zone_code, zone_label, date, source, mean_ndvi = mean)
-)
+  strip_zone_zonal_stats  %>% select(plot, treat, zone_code, zone_label, date, source, mean.NDVI, mean.NDRE),
+  planet_strip_zone_zonal %>% select(plot, treat, zone_code, zone_label, date, source, mean.NDVI, mean.NDRE)
+) %>%
+  pivot_longer(cols = c(mean.NDVI, mean.NDRE), names_to = "metric", values_to = "value") %>%
+  mutate(metric = sub("mean\\.", "", metric)) %>%
+  filter(!is.na(value))
 
 long_data
 
@@ -51,15 +69,16 @@ long_data
 # x drone+matched-satellite).
 
 run_anova <- function(df) {
-  model <- aov(mean_ndvi ~ treat + zone_label, data = df)
+  model <- aov(value ~ treat + zone_label, data = df)
   broom::tidy(model) %>% filter(term == "treat")
 }
 
 anova_results <- long_data %>%
-  group_by(date, source) %>%
+  group_by(date, source, metric) %>%
   group_modify(~ run_anova(.x)) %>%
   ungroup() %>%
-  select(date, source, df, statistic, p.value)
+  select(date, source, metric, df, statistic, p.value) %>%
+  mutate(neg_log10_p = -log10(p.value))
 
 anova_results
 
@@ -97,10 +116,13 @@ variety      <- season_2025$Variety
 plot_data <- anova_results %>% filter(date >= sowing_date)
 
 # ---- Save the ANOVA trend plot ----------------------------------------------
+# Faceted by metric (NDVI/NDRE) since drone has no NDRE data and the two
+# indices' significance patterns shouldn't be visually conflated on one panel.
 anova_plot <- ggplot(plot_data, aes(x = date, y = neg_log10_p, colour = source)) +
   geom_line(data = plot_data %>% filter(source == "planet"), alpha = 0.4) +
   geom_line(data = plot_data %>% filter(source == "satellite"), alpha = 0.4) +
   geom_point(size = 2.5) +
+  facet_wrap(~metric, ncol = 1) +
   geom_hline(yintercept = -log10(0.05), linetype = "dashed", colour = "grey40") +
   geom_vline(xintercept = sowing_date, linetype = "dotted", colour = "darkgreen") +
   geom_vline(xintercept = harvest_date, linetype = "dotted", colour = "sienna") +
@@ -132,8 +154,8 @@ drone_satellite_summary <- anova_results %>%
   filter(source == "drone" | date %in% (drone_dates[which.min(abs(drone_dates - date))])) %>%
   ungroup() %>%
   filter(source == "drone" | sapply(date, function(d) any(abs(d - drone_dates) <= 3))) %>%
-  select(date, source, statistic, p.value) %>%
-  arrange(date, desc(source == "drone"))
+  select(date, source, metric, statistic, p.value) %>%
+  arrange(metric, date, desc(source == "drone"))
 
 drone_satellite_summary
 
