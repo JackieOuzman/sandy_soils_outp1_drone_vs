@@ -1,18 +1,26 @@
 # =============================================================================
-# Script 2b: Planet NDVI QC
+# Script 2b: Planet NDVI/NDRE QC
 # -----------------------------------------------------------------------------
 # Purpose : Planet-specific equivalent of Script 2. Unlike satellite/drone,
 #           Planet delivers raw 8-band surface reflectance (not pre-made
-#           NDVI), so NDVI must be calculated from Red/NIR bands first. Also
-#           applies Planet's proper per-pixel quality mask (udm2 band 1 =
-#           clear), which is a genuine cloud/shadow mask - unlike satellite,
-#           which only has a crude 0-value edge mask (see DECISIONS_LOG).
+#           indices), so NDVI and NDRE must be calculated from Red/NIR and
+#           NIR/RedEdge bands respectively. Also applies Planet's proper
+#           per-pixel quality mask (udm2 band 1 = clear), which is a genuine
+#           cloud/shadow mask - unlike satellite, which only has a crude
+#           0-value edge mask (see DECISIONS_LOG).
+#           Unlike Sentinel-2, Planet does NOT screen for cloud prior to
+#           publication - every captured date is catalogued regardless of
+#           cloud cover. For consistency with Sentinel-2's 30% whole-scene
+#           exclusion rule, whole dates with >30% of pixels masked as
+#           not-clear are flagged for exclusion here, on top of (not
+#           instead of) the existing per-pixel masking.
 #
 # Inputs  : {site_name}_site_inventory_script1.rds  (planet rows: file_path +
 #           mask_path)
 #
 # Outputs : {site_name}_planet_raster_qc_script2b.csv/.rds
-#           (one row per Planet date: mean, sd, pct_masked)
+#           (one row per Planet date: mean/sd for NDVI and NDRE, pct_masked,
+#           excluded_cloud flag)
 #
 # TO RUN A DIFFERENT SITE: change site_name in SITE CONFIG below.
 # =============================================================================
@@ -70,7 +78,9 @@ qc_one_planet <- function(file_path, mask_path, date) {
   m <- rast(mask_path)
   
   ndvi <- (r[["nir"]] - r[["red"]]) / (r[["nir"]] + r[["red"]])
+  ndre <- (r[["nir"]] - r[["rededge"]]) / (r[["nir"]] + r[["rededge"]])
   ndvi <- mask(ndvi, m[["clear"]], maskvalues = 0)
+  ndre <- mask(ndre, m[["clear"]], maskvalues = 0)
   
   n_total <- ncell(ndvi)
   n_valid <- as.numeric(global(!is.na(ndvi), "sum", na.rm = TRUE))
@@ -82,15 +92,22 @@ qc_one_planet <- function(file_path, mask_path, date) {
     n_pixels   = n_total,
     pct_masked = pct_masked,
     mean_ndvi  = round(as.numeric(global(ndvi, "mean", na.rm = TRUE)), 3),
-    sd_ndvi    = round(as.numeric(global(ndvi, "sd", na.rm = TRUE)), 3)
+    sd_ndvi    = round(as.numeric(global(ndvi, "sd", na.rm = TRUE)), 3),
+    mean_ndre  = round(as.numeric(global(ndre, "mean", na.rm = TRUE)), 3),
+    sd_ndre    = round(as.numeric(global(ndre, "sd", na.rm = TRUE)), 3)
   )
 }
 
 # ---- 5. Run across all Planet dates -----------------------------------------
+cloud_threshold_pct <- 30
+
 planet_raster_qc <- planet_rows %>%
   rowwise() %>%
   reframe(qc_one_planet(file_path, mask_path, date)) %>%
-  ungroup()
+  ungroup() %>%
+  mutate(excluded_cloud = pct_masked > cloud_threshold_pct)
+
+planet_raster_qc %>% filter(excluded_cloud) %>% select(date, pct_masked)
 
 planet_raster_qc %>% print(n = Inf)
 

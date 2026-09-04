@@ -44,7 +44,11 @@ site_inventory <- readRDS(file.path(output_folder, paste0(site_name, "_site_inve
 zones_labelled <- readRDS(file.path(output_folder, paste0(site_name, "_zones_labelled_script1.rds")))
 zones_labelled <- st_make_valid(zones_labelled)   # same fix as Script 3, Section 9
 
-planet_rows <- site_inventory %>% filter(source == "planet")
+planet_raster_qc <- readRDS(file.path(output_folder, paste0(site_name, "_planet_raster_qc_script2b.rds")))
+excluded_dates <- planet_raster_qc %>% filter(excluded_cloud) %>% pull(date)
+
+planet_rows <- site_inventory %>%
+  filter(source == "planet", !date %in% excluded_dates)
 
 # ---- 2. Rebuild strips_clean (same as Script 3, Sections 2-3) --------------
 site_files <- read_excel(metadata_path, sheet = "file location etc") %>%
@@ -70,15 +74,16 @@ strip_zone <- st_intersection(strips_clean, zones_labelled) %>%
   mutate(area_m2 = as.numeric(st_area(.))) %>%
   filter(area_m2 > 5)
 
-# ---- 4. Function: build a masked NDVI raster from Planet bands + udm2 -----
-planet_ndvi_raster <- function(file_path, mask_path) {
+# ---- 4. Function: build masked NDVI + NDRE rasters from Planet bands + udm2
+planet_indices_raster <- function(file_path, mask_path) {
   r <- rast(file_path)
   m <- rast(mask_path)
   
   ndvi <- (r[["nir"]] - r[["red"]]) / (r[["nir"]] + r[["red"]])
-  ndvi <- mask(ndvi, m[["clear"]], maskvalues = 0)
-  names(ndvi) <- "NDVI"
-  ndvi
+  ndre <- (r[["nir"]] - r[["rededge"]]) / (r[["nir"]] + r[["rededge"]])
+  stack <- c(ndvi, ndre)
+  names(stack) <- c("NDVI", "NDRE")
+  mask(stack, m[["clear"]], maskvalues = 0)
 }
 
 # ---- 5. Level 1: NDVI per strip (treatment only) ----------------------------
@@ -86,9 +91,9 @@ planet_ndvi_raster <- function(file_path, mask_path) {
 # NDVI raster from bands+mask first instead of reading a ready-made file.
 
 extract_planet_zonal <- function(file_path, mask_path, date, strips) {
-  ndvi <- planet_ndvi_raster(file_path, mask_path)
+  idx <- planet_indices_raster(file_path, mask_path)
   
-  exact_extract(ndvi, strips, fun = c("mean", "stdev", "count")) %>%
+  exact_extract(idx, strips, fun = c("mean", "stdev", "count")) %>%
     bind_cols(strips %>% st_drop_geometry() %>%
                 select(plot, treat, treatment_name, plot_order)) %>%
     mutate(date = date, source = "planet")
@@ -104,12 +109,14 @@ nrow(planet_zonal)   # should be 58 dates x 8 strips = 464
 write_csv(planet_zonal, file.path(output_folder, paste0(site_name, "_planet_zonal_stats_script3b.csv")))
 saveRDS(planet_zonal,  file.path(output_folder, paste0(site_name, "_planet_zonal_stats_script3b.rds")))
 
+
+
 # ---- 6. Level 2: NDVI per zone (ignoring treatment) --------------------------
 
 extract_planet_zonal_zone <- function(file_path, mask_path, date, zones) {
-  ndvi <- planet_ndvi_raster(file_path, mask_path)
+  idx <- planet_indices_raster(file_path, mask_path)
   
-  exact_extract(ndvi, zones, fun = c("mean", "stdev", "count")) %>%
+  exact_extract(idx, zones, fun = c("mean", "stdev", "count")) %>%
     bind_cols(zones %>% st_drop_geometry() %>% select(zone_code, zone_label)) %>%
     mutate(date = date, source = "planet")
 }
@@ -127,9 +134,9 @@ saveRDS(planet_zone_zonal,  file.path(output_folder, paste0(site_name, "_planet_
 # ---- 7. Level 3: NDVI per strip x zone intersection --------------------------
 
 extract_planet_zonal_stripzone <- function(file_path, mask_path, date, strip_zone) {
-  ndvi <- planet_ndvi_raster(file_path, mask_path)
+  idx <- planet_indices_raster(file_path, mask_path)
   
-  exact_extract(ndvi, strip_zone, fun = c("mean", "stdev", "count")) %>%
+  exact_extract(idx, strip_zone, fun = c("mean", "stdev", "count")) %>%
     bind_cols(strip_zone %>% st_drop_geometry() %>%
                 select(plot, treat, treatment_name, plot_order, zone_code, zone_label)) %>%
     mutate(date = date, source = "planet")
@@ -149,7 +156,7 @@ saveRDS(planet_strip_zone_zonal,
 
 
 
-nrow(planet_zonal)              # expect 464
+nrow(planet_zonal)              # expect 464 for site 1
 nrow(planet_zone_zonal)         # expect 174
 nrow(planet_strip_zone_zonal)   # expect 1392
 
