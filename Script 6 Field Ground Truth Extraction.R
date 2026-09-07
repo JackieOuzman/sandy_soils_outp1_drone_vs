@@ -23,6 +23,7 @@ library(dplyr)
 library(readr)
 library(readxl)
 library(sf)
+library(stringr)
 
 # ============================== SITE CONFIG =================================
 site_name     <- "1.Walpeup_MRS125"
