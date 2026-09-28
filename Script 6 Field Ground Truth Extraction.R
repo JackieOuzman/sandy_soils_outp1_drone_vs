@@ -1,20 +1,26 @@
 # =============================================================================
 # Script 6: Field Ground Truth Extraction
 # -----------------------------------------------------------------------------
-# Purpose : Extract per-point Biomass_flowering (kg/ha) from the field
-#           biomass workbook, spatially join to strips_clean and
-#           zones_labelled (by point location, NOT the shapefile's own
-#           treat/cluster attributes - see Script 6 notes), producing one
-#           row per point with treatment and zone attached.
+# Purpose : Extract per-point field measurements - Establishment (plants/m2),
+#           Biomass_flowering (kg/ha), and the four harvest-time variables
+#           (Biomass_maturity kg/ha, Grain_yield kg/ha, Thousand_grain_weight
+#           g/1000 grains, Harvest_index %) - and attach treatment and zone by
+#           POINT LOCATION (spatial join to strips_clean/zones_labelled), NOT
+#           the shapefiles' own treat/cluster attributes.
+#           ASSUMPTION: harvest samples sit at the same locations as the
+#           Establishment points (metadata points all four harvest variables
+#           at the Establishment shapefile), joined by pt_id.
 #
-#          
-#
-# Inputs  : Biomass Excel file (path from metadata: "Biomass_flowering data file")
+# Inputs  : Biomass (flowering) Excel file, Establishment shapefile, Harvest
+#           Index workbook ("Jackie" sheet) - paths from metadata
 #           trial.plan shapefile + treatment names metadata
 #           zones_labelled (Script 1)
 #
-# Outputs : {site_name}_biomass_flowering_ground_truth_script6.csv/.rds
-#           (one row per point, with treat + zone attached)
+# Outputs : {site_name}_field_observations_script6.csv/.rds
+#           (long table, one row per point per variable, with treat + zone)
+#           {site_name}_biomass_points_geo_script6.rds
+#           {site_name}_establishment_points_geo_script6.rds
+#           {site_name}_harvest_points_geo_script6.rds   (sf, with geometry)
 #
 # TO RUN A DIFFERENT SITE: change site_name in SITE CONFIG below.
 # =============================================================================
@@ -43,6 +49,7 @@ cut_length_establishment_m <- 0.5   # per Enqi: default protocol is 4 rows x 0.5
 
 establishment_date <- as.Date("2025-05-19")
 biomass_flowering_date <- as.Date("2025-09-22")
+maturity_date <- as.Date("2025-11-26")   # all four harvest variables (per paddock report)
 # =============================================================================
 
 
@@ -141,6 +148,42 @@ establishment_derived %>% st_drop_geometry() %>%
 # Sanity check: does this look like a plausible wheat establishment rate?
 summary(establishment_derived$establishment_plants_m2)
 
+# ---- 7. Harvest-time variables: maturity biomass, yield, TGW, harvest index
+# All four come from the "Jackie" sheet of the Harvest Index workbook: one row
+# per point (48), already in kg/ha (biomass, yield), g/1000 grains (TGW) and %
+# (harvest index). Zeros would be treated as real, but this sheet has none.
+# Location -> treatment/zone is reused from establishment_derived (same points).
+
+harvest_path <- site_files %>%
+  filter(variable == "Biomass_maturity data file") %>%
+  pull(`file path`)
+
+harvest_data <- read_excel(file.path(base_path, site_name, harvest_path),
+                           sheet = "Jackie") %>%
+  rename_with(trimws) %>%    # "Biomass_maturity " has a trailing space
+  select(pt_id,
+         Biomass_maturity,
+         Grain_yield           = `Grain yield`,
+         Thousand_grain_weight = `Thousand grain weight`,
+         Harvest_index         = `Harvest index`)
+
+harvest_derived <- establishment_derived %>%
+  select(pt_id, treat, treatment_name, plot_order, zone_code, zone_label, geometry) %>%
+  left_join(harvest_data, by = "pt_id")
+
+# Checks: all 48 points matched, no NAs in any variable
+nrow(harvest_derived)
+harvest_derived %>% st_drop_geometry() %>%
+  summarise(across(c(Biomass_maturity, Grain_yield, Thousand_grain_weight, Harvest_index),
+                   ~ sum(is.na(.x))))
+
+# Plausibility check on the pt_id -> location assumption (see notes below)
+harvest_derived %>% st_drop_geometry() %>%
+  group_by(zone_label, treat) %>%
+  summarise(mean_yield_kg_ha = round(mean(Grain_yield)), .groups = "drop") %>%
+  arrange(zone_label, mean_yield_kg_ha) %>%
+  print(n = Inf)
+
 
 # ---- 8. Combine Biomass and Establishment into one field observations df --
 
@@ -166,7 +209,27 @@ establishment_long <- establishment_derived %>%
     date_sampled  = establishment_date,
     standardised  = TRUE
   )
-field_observations <- bind_rows(biomass_long, establishment_long) %>%
+make_long <- function(df, col, var_name, unit_label, sample_date) {
+  df %>%
+    st_drop_geometry() %>%
+    transmute(
+      pt_id, treat, treatment_name, plot_order, zone_code, zone_label,
+      variable     = var_name,
+      value        = .data[[col]],
+      units        = unit_label,
+      date_sampled = sample_date,
+      standardised = TRUE
+    )
+}
+
+harvest_long <- bind_rows(
+  make_long(harvest_derived, "Biomass_maturity",      "Biomass_maturity",      "kg/ha",         maturity_date),
+  make_long(harvest_derived, "Grain_yield",           "Grain_yield",           "kg/ha",         maturity_date),
+  make_long(harvest_derived, "Thousand_grain_weight", "Thousand_grain_weight", "g/1000 grains", maturity_date),
+  make_long(harvest_derived, "Harvest_index",         "Harvest_index",         "%",             maturity_date)
+)
+
+field_observations <- bind_rows(biomass_long, establishment_long, harvest_long) %>%
   arrange(variable, plot_order, zone_label)
 
 field_observations %>% count(variable, date_sampled, standardised)
@@ -176,8 +239,10 @@ field_observations %>% count(variable, date_sampled, standardised)
 # ---- 9. Save the combined field observations table -------------------------
 write_csv(field_observations,
           file.path(output_folder, paste0(site_name, "_field_observations_script6.csv")))
-saveRDS(field_observations,
-        file.path(output_folder, paste0(site_name, "_field_observations_script6.rds")))
+saveRDS(establishment_derived,
+        file.path(output_folder, paste0(site_name, "_establishment_points_geo_script6.rds")))
+saveRDS(harvest_derived,
+        file.path(output_folder, paste0(site_name, "_harvest_points_geo_script6.rds")))
 
 
 # ---- Save the point-level sf objects (WITH geometry) for Script 7 ---------
