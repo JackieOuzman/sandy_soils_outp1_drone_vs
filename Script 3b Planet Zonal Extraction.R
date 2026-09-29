@@ -37,7 +37,8 @@ library(terra)
 library(exactextractr)
 
 # ============================== SITE CONFIG =================================
-site_name     <- "1.Walpeup_MRS125"
+#site_name     <- "1.Walpeup_MRS125"
+site_name     <- "2.Crystal_Brook_Brians_House"
 base_path     <- "H:/Output-1"
 metadata_path <- file.path(base_path, "0.Site-info",
                            "names of treatments per site 2025 metadata and other info.xlsx")
@@ -111,7 +112,9 @@ planet_zonal <- planet_rows %>%
   reframe(extract_planet_zonal(file_path, mask_path, date, strips_clean)) %>%
   ungroup()
 
-nrow(planet_zonal)   # should be 58 dates x 8 strips = 464
+nrow(planet_zonal)   # site 1 = should be 58 dates x 8 strips = 464. site 2 = 170, 136 and 680
+
+
 
 write_csv(planet_zonal, file.path(output_folder, paste0(site_name, "_planet_zonal_stats_script3b.csv")))
 saveRDS(planet_zonal,  file.path(output_folder, paste0(site_name, "_planet_zonal_stats_script3b.rds")))
@@ -133,7 +136,7 @@ planet_zone_zonal <- planet_rows %>%
   reframe(extract_planet_zonal_zone(file_path, mask_path, date, zones_labelled)) %>%
   ungroup()
 
-nrow(planet_zone_zonal)   # should be 58 dates x 3 zones = 174
+nrow(planet_zone_zonal)   # site 1 = should be 58 dates x 3 zones = 174
 
 write_csv(planet_zone_zonal, file.path(output_folder, paste0(site_name, "_planet_zone_zonal_stats_script3b.csv")))
 saveRDS(planet_zone_zonal,  file.path(output_folder, paste0(site_name, "_planet_zone_zonal_stats_script3b.rds")))
@@ -154,7 +157,7 @@ planet_strip_zone_zonal <- planet_rows %>%
   reframe(extract_planet_zonal_stripzone(file_path, mask_path, date, strip_zone)) %>%
   ungroup()
 
-nrow(planet_strip_zone_zonal)   # should be 58 dates x 24 strip-zone pieces = 1392
+nrow(planet_strip_zone_zonal)   # site 1 = should be 58 dates x 24 strip-zone pieces = 1392
 
 write_csv(planet_strip_zone_zonal,
           file.path(output_folder, paste0(site_name, "_planet_strip_zone_zonal_stats_script3b.csv")))
@@ -163,8 +166,4 @@ saveRDS(planet_strip_zone_zonal,
 
 
 
-nrow(planet_zonal)              # expect 464 for site 1
-nrow(planet_zone_zonal)         # expect 174
-nrow(planet_strip_zone_zonal)   # expect 1392
 
-planet_zonal %>% filter(date == as.Date("2025-06-25")) %>% arrange(plot_order)
