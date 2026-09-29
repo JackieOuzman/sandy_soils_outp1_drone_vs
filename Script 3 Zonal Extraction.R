@@ -47,7 +47,8 @@ library(terra)
 library(exactextractr)
 
 # ============================== SITE CONFIG =================================
-site_name     <- "1.Walpeup_MRS125"
+#site_name     <- "1.Walpeup_MRS125"
+site_name     <- "2.Crystal_Brook_Brians_House"
 base_path     <- "H:/Output-1"
 metadata_path <- file.path(base_path, "0.Site-info",
                            "names of treatments per site 2025 metadata and other info.xlsx")
@@ -200,8 +201,8 @@ drone_zonal <- site_inventory %>%
   reframe(extract_zonal(file_path, raw_path, date, source, strips_clean)) %>%
   ungroup()
 
-nrow(drone_zonal)   # should be 2 dates x 8 strips = 16
-drone_zonal %>% distinct(date) %>% nrow()  # sanity check: 2 unique dates
+nrow(drone_zonal)   # should be 2 dates x 8 strips = 16, site 2= 1*5 =5
+drone_zonal %>% distinct(date) %>% nrow()  # sanity check: 2 unique dates for site 1 or 1 for site 2
 
 # ---- 8. Combine satellite + drone zonal stats (Level 1: treatment only) ---
 
@@ -327,10 +328,16 @@ names(drone_zonal)
 drone_zonal %>% select(mean.NDVI, mean.NDRE, stdev.NDRE, count.NDRE) %>% head()
 
 # 2. Row counts still check out
-nrow(satellite_zonal)   # expect 272
-nrow(drone_zonal)       # expect 16
-nrow(zone_zonal)        # expect 32 x 2? actually check whatever your zone-level total should be
-nrow(strip_zone_zonal_stats)  # expect 288 (34 sat + 2 drone) x 3 zones? check against what Level 3 was before
+nrow(satellite_zonal)   # expect 272 site 1.85 site2.
+nrow(drone_zonal)       # expect 16 site 1. 5 site 2
+nrow(zone_zonal)        # expect 32 x 2? actually check whatever your zone-level total should be site 1.72 site 2
+nrow(strip_zone_zonal_stats)  # expect 288 (34 sat + 2 drone) x 3 zones? check against what Level 3 was before site 1. 360 site2
 
 # 3. NDVI vs NDRE relationship for a few satellite rows
 satellite_zonal %>% filter(date == min(date)) %>% select(treat, mean.NDVI, mean.NDRE)
+
+
+
+as.data.frame(strip_zone %>% st_drop_geometry() %>% count(treat, zone_label))
+nrow(satellite_zonal); nrow(drone_zonal); nrow(zone_zonal); nrow(strip_zone_zonal_stats)
+list.files(output_folder, pattern = "script3")

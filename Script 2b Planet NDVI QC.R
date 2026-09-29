@@ -33,7 +33,8 @@ library(readxl)
 library(ggplot2)
 
 # ============================== SITE CONFIG =================================
-site_name     <- "1.Walpeup_MRS125"
+#site_name     <- "1.Walpeup_MRS125"
+site_name     <- "2.Crystal_Brook_Brians_House"
 base_path     <- "H:/Output-1"
 metadata_path <- file.path(base_path, "0.Site-info",
                            "names of treatments per site 2025 metadata and other info.xlsx")
@@ -90,8 +91,12 @@ qc_one_planet <- function(file_path, mask_path, date) {
   ndre <- mask(ndre, m[["clear"]], maskvalues = 0)
   
   n_total <- ncell(ndvi)
+  # Pixels outside Planet's image footprint are NA in the SR bands and 0 in
+  # udm2 "clear" - so count only pixels WITH image data, or no-coverage gets
+  # counted as cloud (at Brians House ~44% of every clip is no-coverage).
+  n_data  <- as.numeric(global(!is.na(r[["nir"]]), "sum"))
   n_valid <- as.numeric(global(!is.na(ndvi), "sum", na.rm = TRUE))
-  pct_masked <- round(100 * (n_total - n_valid) / n_total, 1)
+  pct_masked <- round(100 * (n_data - n_valid) / n_data, 1)   # % of imaged pixels not clear
   
   tibble(
     date       = date,
@@ -121,11 +126,22 @@ planet_raster_qc %>% print(n = Inf)
 # ---- 6. Quick check: does the footprint genuinely shrink, or is it just masking?
 # Compare total extent (not masked) for a normal date vs a shifted-extent date
 
-r_normal <- rast(planet_rows$file_path[planet_rows$date == as.Date("2025-04-29")])
-r_shifted <- rast(planet_rows$file_path[planet_rows$date == as.Date("2025-05-30")])
+#r_normal <- rast(planet_rows$file_path[planet_rows$date == as.Date("2025-04-29")])#site 1
+#r_shifted <- rast(planet_rows$file_path[planet_rows$date == as.Date("2025-05-30")])#site 1
+#ext(r_normal)
+#ext(r_shifted)
 
-ext(r_normal)
-ext(r_shifted)
+#replaced with this...
+r <- rast(planet_rows$file_path[1])
+m <- rast(planet_rows$mask_path[1])
+
+ncell(r)                                               # total pixels in the clip
+global(is.na(r[["nir"]]), "sum")                       # pixels with no data (NA)
+global(r[["nir"]] == 0, "sum", na.rm = TRUE)           # pixels coded 0
+freq(m[["clear"]])                                     # udm2 clear band: counts of 0 and 1
+global(is.na(m[["clear"]]), "sum")                     # NA in the mask
+
+
 # ---- 7. Save Script 2b output -----------------------------------------------
 write_csv(planet_raster_qc, file.path(output_folder, paste0(site_name, "_planet_raster_qc_script2b.csv")))
 saveRDS(planet_raster_qc,  file.path(output_folder, paste0(site_name, "_planet_raster_qc_script2b.rds")))
@@ -183,3 +199,5 @@ cloud_plot
 
 ggsave(file.path(output_folder, paste0(site_name, "_cloud_exclusion_script2b.png")),
        cloud_plot, width = 9, height = 4, dpi = 300)
+
+
