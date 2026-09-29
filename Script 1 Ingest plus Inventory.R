@@ -34,7 +34,8 @@ library(sf)
 
 
 # ============================== SITE CONFIG =================================
-site_name     <- "1.Walpeup_MRS125"
+#site_name     <- "1.Walpeup_MRS125"
+site_name     <- "2.Crystal_Brook_Brians_House"
 base_path     <- "H:/Output-1"
 metadata_path <- file.path(base_path, "0.Site-info",
                            "names of treatments per site 2025 metadata and other info.xlsx")
@@ -272,3 +273,11 @@ if (!dir.exists(output_folder)) dir.create(output_folder, recursive = TRUE)
 write_csv(site_inventory, file.path(output_folder, paste0(site_name, "_site_inventory_script1.csv")))
 saveRDS(site_inventory,  file.path(output_folder, paste0(site_name, "_site_inventory_script1.rds")))
 saveRDS(zones_labelled,  file.path(output_folder, paste0(site_name, "_zones_labelled_script1.rds")))
+
+
+# What was found, per source
+site_inventory %>% count(source, variable)
+
+# Zone codes and labels
+zones_labelled %>% st_drop_geometry() %>% distinct()
+
