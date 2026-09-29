@@ -20,6 +20,7 @@
 #           raw_path [10-band stack, needed for NDRE]; Planet rows include
 #           mask_path [udm2])
 #           zones_labelled     (sf polygons, zone code + real zone label)
+#           {site_name}_observation_timeline_script1.png (Figure, Section 3.1)
 #
 # TO RUN A DIFFERENT SITE: change site_name in SITE CONFIG below. Everything
 # else in this script derives from that one value.
@@ -222,16 +223,48 @@ site_inventory <- bind_rows(satellite_inventory, drone_inventory, planet_invento
 
 site_inventory
 
-# ---- 6. Quick visual check: timeline of all observation dates -------------
+# ---- 6. Observation timeline: all sources, saved for the manuscript -------
 library(ggplot2)
 
-ggplot(site_inventory %>% filter(!is.na(date)),
-       aes(x = date, y = source, colour = source)) +
+timeline_data <- site_inventory %>%
+  filter(!is.na(date)) %>%
+  mutate(source = factor(source, levels = c("field", "drone", "planet", "satellite"),
+                         labels = c("Field", "Drone", "Planet", "Sentinel-2")))
+
+# Sowing/harvest dates for reference lines (same source as Script 5's ANOVA plot)
+season_2025 <- read_excel(metadata_path, sheet = "seasons") %>%
+  filter(Site == site_name, Year == 2025)
+
+sowing_date  <- as.Date(season_2025$`Sowing date`)
+harvest_date <- as.Date(season_2025$`Harvest date`)
+
+timeline_plot <- ggplot(timeline_data, aes(x = date, y = source, colour = source)) +
+  geom_vline(xintercept = sowing_date, linetype = "dotted", colour = "darkgreen") +
+  geom_vline(xintercept = harvest_date, linetype = "dotted", colour = "sienna") +
   geom_point(size = 3) +
+  annotate("text", x = sowing_date, y = Inf, label = "Sowing",
+           angle = 90, vjust = -0.5, hjust = 1.1, size = 3, colour = "darkgreen") +
+  annotate("text", x = harvest_date, y = Inf, label = "Harvest",
+           angle = 90, vjust = -0.5, hjust = 1.1, size = 3, colour = "sienna") +
   labs(title = paste("Observation timeline —", site_name),
-       x = NULL, y = NULL) +
+       subtitle = "Dates with usable imagery or field sampling, by source",
+       x = NULL, y = NULL,
+       caption = paste(
+         "Shows all data captured or downloaded, before any cloud-based exclusion.",
+         "Sentinel-2 dates were pre-filtered for cloud cover (<30%) at export, upstream",
+         "of this pipeline, so excluded Sentinel-2 dates are not recorded and cannot be",
+         "shown. Planet dates shown here have not yet been screened for cloud cover;",
+         "see Script 2b / Figure [X] for Planet dates excluded by the 30% rule.",
+         sep = "\n"
+       )) +
   theme_minimal() +
-  theme(legend.position = "none")
+  theme(legend.position = "none",
+        plot.caption = element_text(hjust = 0, size = 8, colour = "grey30"))
+
+timeline_plot
+
+ggsave(file.path(output_folder, paste0(site_name, "_observation_timeline_script1.png")),
+       timeline_plot, width = 9, height = 4, dpi = 300)
 
 # ---- 7. Save the inventory + zone polygons for use by downstream scripts ---
 if (!dir.exists(output_folder)) dir.create(output_folder, recursive = TRUE)

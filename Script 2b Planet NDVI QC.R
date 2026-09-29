@@ -21,6 +21,7 @@
 # Outputs : {site_name}_planet_raster_qc_script2b.csv/.rds
 #           (one row per Planet date: mean/sd for NDVI and NDRE, pct_masked,
 #           excluded_cloud flag)
+#           {site_name}_cloud_exclusion_script2b.png (Figure, Section 3.1)
 #
 # TO RUN A DIFFERENT SITE: change site_name in SITE CONFIG below.
 # =============================================================================
@@ -28,12 +29,18 @@
 library(dplyr)
 library(readr)
 library(terra)
+library(readxl)
+library(ggplot2)
 
 # ============================== SITE CONFIG =================================
 site_name     <- "1.Walpeup_MRS125"
+base_path     <- "H:/Output-1"
+metadata_path <- file.path(base_path, "0.Site-info",
+                           "names of treatments per site 2025 metadata and other info.xlsx")
 pipeline_output_base <- "H:/Output-1/Jackie notes processing etc/Drone_Vs_Satellite"
 output_folder         <- file.path(pipeline_output_base, site_name)
 # =============================================================================
+
 
 # ---- 1. Load Script 1's saved inventory ------------------------------------
 site_inventory <- readRDS(file.path(output_folder, paste0(site_name, "_site_inventory_script1.rds")))
@@ -122,3 +129,57 @@ ext(r_shifted)
 # ---- 7. Save Script 2b output -----------------------------------------------
 write_csv(planet_raster_qc, file.path(output_folder, paste0(site_name, "_planet_raster_qc_script2b.csv")))
 saveRDS(planet_raster_qc,  file.path(output_folder, paste0(site_name, "_planet_raster_qc_script2b.rds")))
+
+
+# ---- 8. Plot: Planet dates used vs excluded, alongside Sentinel-2 ----------
+# Sentinel-2 is pre-filtered upstream of this pipeline (see Script 1 caption)
+# so every Sentinel-2 date shown here was already accepted before it reached
+# us; only Planet has a genuine used/excluded split computable from our data.
+
+season_2025 <- read_excel(metadata_path, sheet = "seasons") %>%
+  filter(Site == site_name, Year == 2025)
+
+sowing_date  <- as.Date(season_2025$`Sowing date`)
+harvest_date <- as.Date(season_2025$`Harvest date`)
+
+cloud_plot_data <- bind_rows(
+  planet_raster_qc %>%
+    transmute(date, source = "Planet",
+              status = if_else(excluded_cloud, "Excluded (>30% masked)", "Used")),
+  site_inventory %>%
+    filter(source == "satellite") %>%
+    transmute(date, source = "Sentinel-2", status = "Used (pre-filtered)")
+) %>%
+  mutate(source = factor(source, levels = c("Sentinel-2", "Planet")))
+
+cloud_plot <- ggplot(cloud_plot_data, aes(x = date, y = source, colour = status, shape = status)) +
+  geom_vline(xintercept = sowing_date, linetype = "dotted", colour = "darkgreen") +
+  geom_vline(xintercept = harvest_date, linetype = "dotted", colour = "sienna") +
+  geom_point(size = 3) +
+  annotate("text", x = sowing_date, y = Inf, label = "Sowing",
+           angle = 90, vjust = -0.5, hjust = 1.1, size = 3, colour = "darkgreen") +
+  annotate("text", x = harvest_date, y = Inf, label = "Harvest",
+           angle = 90, vjust = -0.5, hjust = 1.1, size = 3, colour = "sienna") +
+  scale_colour_manual(values = c("Used" = "steelblue", "Excluded (>30% masked)" = "grey70",
+                                 "Used (pre-filtered)" = "steelblue")) +
+  scale_shape_manual(values = c("Used" = 16, "Excluded (>30% masked)" = 4,
+                                "Used (pre-filtered)" = 16)) +
+  labs(title = paste("Cloud-based date exclusion —", site_name),
+       subtitle = "Planet dates excluded by the 30% masked-pixel rule, vs Sentinel-2",
+       x = NULL, y = NULL, colour = NULL, shape = NULL,
+       caption = paste(
+         "Sentinel-2 dates were pre-filtered for cloud cover (<30%) before reaching this",
+         "pipeline, so all dates shown here were already accepted; the pre-filtering step",
+         "itself is not auditable from this pipeline's data. Planet dates were not",
+         "pre-filtered, so the used/excluded split shown here (30% masked-pixel threshold)",
+         "is fully computed within this pipeline.",
+         sep = "\n"
+       )) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        plot.caption = element_text(hjust = 0, size = 8, colour = "grey30"))
+
+cloud_plot
+
+ggsave(file.path(output_folder, paste0(site_name, "_cloud_exclusion_script2b.png")),
+       cloud_plot, width = 9, height = 4, dpi = 300)
