@@ -34,7 +34,8 @@ library(readr)
 library(tidyr)
 
 # ============================== SITE CONFIG =================================
-site_name     <- "1.Walpeup_MRS125"
+#site_name     <- "1.Walpeup_MRS125"
+site_name     <- "2.Crystal_Brook_Brians_House"
 pipeline_output_base <- "H:/Output-1/Jackie notes processing etc/Drone_Vs_Satellite"
 output_folder         <- file.path(pipeline_output_base, site_name)
 # =============================================================================
@@ -91,7 +92,7 @@ saveRDS(anova_results,  file.path(output_folder, paste0(site_name, "_anova_resul
 library(dplyr)
 library(readxl)
 
-site_name     <- "1.Walpeup_MRS125"
+#site_name     <- "1.Walpeup_MRS125"
 base_path     <- "H:/Output-1"
 metadata_path <- file.path(base_path, "0.Site-info",
                            "names of treatments per site 2025 metadata and other info.xlsx")
@@ -141,6 +142,7 @@ anova_plot <- ggplot(plot_data, aes(x = date, y = neg_log10_p, colour = source))
   ) +
   theme_minimal() +
   theme(plot.caption = element_text(hjust = 0, size = 8, colour = "grey30"))
+anova_plot
 
 ggsave(file.path(output_folder, paste0(site_name, "_anova_trend_script5.png")),
        anova_plot, width = 10, height = 6, dpi = 300)
