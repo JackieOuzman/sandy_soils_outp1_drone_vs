@@ -163,3 +163,81 @@ write_csv(drone_satellite_summary,
           file.path(output_folder, paste0(site_name, "_drone_satellite_fstat_summary_script5.csv")))
 saveRDS(drone_satellite_summary,
         file.path(output_folder, paste0(site_name, "_drone_satellite_fstat_summary_script5.rds")))
+
+
+# ---- 5. Factorial ANOVA: Spade + Rip + Lime + zone -------------------------
+# Walpeup's 8 treatments are a 2 x 2 x 2 factorial (Spade, Rip, Lime), so the
+# treatment effect can be split into three main effects. Used to justify the
+# Spade vs non-Spade grouping in Results 3.3/3.4 (see DECISIONS_LOG).
+# WALPEUP-SPECIFIC: factors are coded from the treatment letters. Other sites
+# are not factorials - check the design before reusing (Script 8).
+
+factorial_results <- long_data %>%
+  mutate(spade = grepl("S", treat),     # S, SL, SR, SRL
+         rip   = grepl("R", treat),     # R, RL, SR, SRL
+         lime  = grepl("L", treat)) %>% # L, RL, SL, SRL
+  group_by(date, source, metric) %>%
+  group_modify(~ broom::tidy(aov(value ~ spade + rip + lime + zone_label, data = .x))) %>%
+  ungroup() %>%
+  filter(term %in% c("spade", "rip", "lime")) %>%
+  select(date, source, metric, term, df, statistic, p.value)
+
+# Summary: in-season dates where each factor was significant (p < 0.05)
+factorial_results %>%
+  filter(date >= sowing_date, date <= harvest_date) %>%
+  group_by(metric, source, term) %>%
+  summarise(n_dates  = n(),
+            n_sig    = sum(p.value < 0.05),
+            median_F = round(median(statistic), 1),
+            .groups  = "drop") %>%
+  arrange(metric, source, desc(median_F)) %>%
+  print(n = Inf)
+
+write_csv(factorial_results,
+          file.path(output_folder, paste0(site_name, "_factorial_anova_script5.csv")))
+saveRDS(factorial_results,
+        file.path(output_folder, paste0(site_name, "_factorial_anova_script5.rds")))
+
+
+# ---- 6. Does accounting for zone change the conclusions? -------------------
+# Same treatment test as Section 3, fitted WITHOUT zone (value ~ treat) and
+# WITH zone (value ~ treat + zone). If zone matters, the treatment result
+# changes between the two. Also records the zone effect itself (from the
+# with-zone model). Answers research question 2.
+
+zone_compare <- long_data %>%
+  group_by(date, source, metric) %>%
+  group_modify(~ {
+    no_zone   <- broom::tidy(aov(value ~ treat, data = .x))
+    with_zone <- broom::tidy(aov(value ~ treat + zone_label, data = .x))
+    tibble(
+      F_treat_nozone   = no_zone$statistic[no_zone$term == "treat"],
+      p_treat_nozone   = no_zone$p.value[no_zone$term == "treat"],
+      F_treat_withzone = with_zone$statistic[with_zone$term == "treat"],
+      p_treat_withzone = with_zone$p.value[with_zone$term == "treat"],
+      F_zone           = with_zone$statistic[with_zone$term == "zone_label"],
+      p_zone           = with_zone$p.value[with_zone$term == "zone_label"]
+    )
+  }) %>%
+  ungroup()
+
+# Summary: in-season dates, per index and source
+zone_compare %>%
+  filter(date >= sowing_date, date <= harvest_date) %>%
+  group_by(metric, source) %>%
+  summarise(n_dates           = n(),
+            sig_nozone        = sum(p_treat_nozone < 0.05),
+            sig_withzone      = sum(p_treat_withzone < 0.05),
+            zone_sig          = sum(p_zone < 0.05),
+            median_F_nozone   = round(median(F_treat_nozone), 1),
+            median_F_withzone = round(median(F_treat_withzone), 1),
+            median_F_zone     = round(median(F_zone), 1),
+            .groups = "drop") %>%
+  arrange(metric, source) %>%
+  print(n = Inf)
+
+write_csv(zone_compare,
+          file.path(output_folder, paste0(site_name, "_zone_compare_script5.csv")))
+saveRDS(zone_compare,
+        file.path(output_folder, paste0(site_name, "_zone_compare_script5.rds")))
+

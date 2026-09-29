@@ -367,3 +367,4 @@ write_csv(harvest_adjusted_compare,
           file.path(output_folder, paste0(site_name, "_harvest_correlations_adjusted_script7.csv")))
 saveRDS(harvest_adjusted_compare,
         file.path(output_folder, paste0(site_name, "_harvest_correlations_adjusted_script7.rds")))
+
