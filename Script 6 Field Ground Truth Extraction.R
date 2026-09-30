@@ -58,7 +58,9 @@ library(stringr)
 
 # ============================== SITE CONFIG =================================
 #site_name     <- "1.Walpeup_MRS125"
-site_name     <- "2.Crystal_Brook_Brians_House"
+#site_name     <- "2.Crystal_Brook_Brians_House"
+site_name     <- "3.Wynarka_Mervs_West"
+
 base_path     <- "H:/Output-1"
 metadata_path <- file.path(base_path, "0.Site-info",
                            "names of treatments per site 2025 metadata and other info.xlsx")
@@ -72,9 +74,7 @@ output_folder         <- file.path(pipeline_output_base, site_name)
 #   checked "Jackie" sheet
 # - sampling dates come from the metadata via Script 1's inventory (Section 2)
 
-establishment_date <- as.Date("2025-05-19")
-biomass_flowering_date <- as.Date("2025-09-22")
-maturity_date <- as.Date("2025-11-26")   # all four harvest variables (per paddock report)
+
 # =============================================================================
 
 
@@ -159,6 +159,13 @@ field_points <- do.call(rbind, lapply(seq_len(nrow(field_vars)), function(i) {
   v <- field_vars[i, ]
   read_field_variable(v$variable, v$data_path, v$sheet, v$shp_path, v$date_sampled, v$units)
 }))
+
+# Points outside the analysed treatment strips are excluded from all
+# point-level analysis (e.g. Mervs West: 21 points in the original control
+# strip, which was disturbed and moved in 2025; no points were sampled in the
+# new control). No effect at Walpeup or Brians House (all points in strips).
+field_points %>% st_drop_geometry() %>% filter(is.na(treat)) %>% count(variable, name = "n_excluded")
+field_points <- field_points %>% filter(!is.na(treat))
 
 # Checks per variable: points, missing values, zeros, points outside a
 # strip/zone, value range, date and units

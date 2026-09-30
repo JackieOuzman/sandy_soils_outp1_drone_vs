@@ -48,8 +48,11 @@ library(exactextractr)
 library(ggplot2)
 
 # ============================== SITE CONFIG =================================
-site_name     <- "1.Walpeup_MRS125"
+#site_name     <- "1.Walpeup_MRS125"
 #site_name     <- "2.Crystal_Brook_Brians_House"
+site_name     <- "3.Wynarka_Mervs_West"
+
+
 pipeline_output_base <- "H:/Output-1/Jackie notes processing etc/Drone_Vs_Satellite"
 output_folder         <- file.path(pipeline_output_base, site_name)
 
@@ -422,3 +425,8 @@ write_csv(harvest_adjusted_compare,
 saveRDS(harvest_adjusted_compare,
         file.path(output_folder, paste0(site_name, "_harvest_correlations_adjusted_script7.rds")))
 
+
+est_sat_date; est_planet_date; bio_sat_date; bio_planet_date; est_drone_date; bio_drone_date
+
+readRDS(file.path(output_folder, paste0(site_name, "_harvest_correlations_script7.rds"))) %>%
+  filter(set == "exploratory") %>% print(n = Inf)
