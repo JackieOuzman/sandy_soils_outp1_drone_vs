@@ -34,7 +34,10 @@ library(terra)
 
 # ============================== SITE CONFIG =================================
 #site_name     <- "1.Walpeup_MRS125"
-site_name     <- "2.Crystal_Brook_Brians_House"
+#site_name     <- "2.Crystal_Brook_Brians_House"
+site_name     <- "3.Wynarka_Mervs_West"
+
+
 base_path     <- "H:/Output-1"
 metadata_path <- file.path(base_path, "0.Site-info",
                            "names of treatments per site 2025 metadata and other info.xlsx")
@@ -211,6 +214,9 @@ table_s1
 
 readr::write_csv(table_s1,
                  file.path(output_folder, paste0(site_name, "_table_S1_anova_full_MS.csv")))
+
+
+######### STOP ##################################################################
 
 ################################################################################
 ### Below this is site 1 specific analysis / reporting #########################
@@ -397,3 +403,57 @@ fig_groundtruth
 
 ggsave(file.path(output_folder, paste0(site_name, "_fig_groundtruth_vs_ndvi_MS.png")),
        fig_groundtruth, width = 9, height = 10, dpi = 300)
+
+
+
+# ---- 9. Figure: treatment means by source at each drone date, with F (Results 3.4)
+# Works at any site. For each drone flight: treatment mean NDVI (strip means)
+# from the drone and from the nearest Planet and Sentinel-2 image (Script 4
+# matches), with each source's treatment F-statistic on its date (Script 5,
+# strip x zone ANOVA). Wider spread of points = larger treatment differences.
+
+m_sat <- readRDS(file.path(output_folder, paste0(site_name, "_treatment_NDVI_matched_drone_satellite_script4.rds")))
+m_pla <- readRDS(file.path(output_folder, paste0(site_name, "_treatment_NDVI_matched_drone_planet_script4.rds")))
+
+res_means <- bind_rows(
+  m_sat %>% transmute(date_drone, treatment_name, source = "Drone",      date = date_drone,     ndvi = mean_drone),
+  m_sat %>% transmute(date_drone, treatment_name, source = "Sentinel-2", date = date_satellite, ndvi = mean_satellite),
+  m_pla %>% transmute(date_drone, treatment_name, source = "Planet",     date = date_planet,    ndvi = mean_planet)
+) %>%
+  mutate(flight = paste("Drone flight", format(date_drone, "%d %b")))
+
+# F-statistic for each source on its matched date (NDVI, from Section 4's anova_results)
+res_F <- res_means %>%
+  distinct(flight, source, date) %>%
+  left_join(anova_results %>%
+              filter(metric == "NDVI") %>%
+              mutate(source = recode(source, drone = "Drone", planet = "Planet", satellite = "Sentinel-2")) %>%
+              select(source, date, statistic),
+            by = c("source", "date")) %>%
+  mutate(label = paste0("F = ", sprintf("%.1f", statistic)))   # always one decimal (23.0, 9.0)
+
+res_F   # check: one row per flight x source, with F values
+
+src_levels <- c("Drone", "Planet", "Sentinel-2")
+res_means  <- res_means %>% mutate(source = factor(source, levels = src_levels))
+res_F      <- res_F     %>% mutate(source = factor(source, levels = src_levels))
+
+# Treatment colours from the metadata "treatment names" sheet
+tn_all      <- read_excel(metadata_path, sheet = "treatment names") %>% filter(Site == site_name)
+trt_colours <- setNames(tn_all$Hex, tn_all$`Shorthand Name`)
+
+fig_res_means <- ggplot(res_means, aes(x = source, y = ndvi, colour = treatment_name)) +
+  geom_point(size = 3.5, position = position_dodge(width = 0.6)) +
+  geom_text(data = res_F, aes(x = source, y = Inf, label = label),
+            inherit.aes = FALSE, vjust = 1.5, size = 4.5) +
+  facet_wrap(~ flight) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.2))) +   # room for F labels
+  scale_colour_manual(values = trt_colours) +
+  labs(x = NULL, y = "Treatment mean NDVI", colour = NULL) +
+  theme_minimal(base_size = 16) +
+  theme(legend.position = "bottom")
+
+fig_res_means
+
+ggsave(file.path(output_folder, paste0(site_name, "_fig_treatment_means_by_source_MS.png")),
+       fig_res_means, width = 9, height = 6, dpi = 300)
