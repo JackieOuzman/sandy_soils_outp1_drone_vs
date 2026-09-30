@@ -1,28 +1,53 @@
 # =============================================================================
 # Script 6: Field Ground Truth Extraction
 # -----------------------------------------------------------------------------
-# Purpose : Extract per-point field measurements - Establishment (plants/m2),
-#           Biomass_flowering (kg/ha), and the four harvest-time variables
-#           (Biomass_maturity kg/ha, Grain_yield kg/ha, Thousand_grain_weight
-#           g/1000 grains, Harvest_index %) - and attach treatment and zone by
-#           POINT LOCATION (spatial join to strips_clean/zones_labelled), NOT
-#           the shapefiles' own treat/cluster attributes.
-#           ASSUMPTION: harvest samples sit at the same locations as the
-#           Establishment points (metadata points all four harvest variables
-#           at the Establishment shapefile), joined by pt_id.
+# Purpose : Assemble per-point field measurements for one site - Establishment
+#           (plants/m2), Biomass_flowering (kg/ha), Biomass_maturity (kg/ha),
+#           Grain yield (kg/ha), Thousand grain weight (g/1000 grains),
+#           Harvest index (%) and Protein (%) where available - and attach
+#           treatment and zone by POINT LOCATION (spatial join to
+#           strips_clean / zones_labelled), NOT the shapefiles' own attributes.
 #
-# Inputs  : Biomass (flowering) Excel file, Establishment shapefile, Harvest
-#           Index workbook ("Jackie" sheet) - paths from metadata
-#           trial.plan shapefile + treatment names metadata
-#           zones_labelled (Script 1)
+# Approach: Metadata-driven, identical code for every site. For each variable
+#           the metadata ("file location etc") gives an Excel data file and a
+#           point shapefile. Values are read from each file's checked "Jackie"
+#           sheet (already in final units - NO row spacing, cut length or unit
+#           conversion in R), joined to point locations by pt_id.
+#           Rewritten 30 Sep 2026; reproduces the earlier Walpeup outputs
+#           exactly (all values identical - see DECISIONS_LOG).
+#
+# Requires: Each Jackie sheet: header in row 1, a "pt_id" column, and value
+#           columns named exactly as in the metadata "units" sheet (e.g.
+#           "Establishment", "Grain yield"). Extra columns are ignored.
+#           Zeros are real values; blanks = missing (never 0 for missing).
+#           Sheet name defaults to "Jackie"; for a workbook shared between
+#           sites, add a "sheet name" column to "file location etc" and fill
+#           it for that row only (e.g. "Jackie GUMS", "Jackie Randals").
+#
+# Inputs  : metadata: "file location etc" (data file + shp file per variable,
+#           trial.plan), "units", "treatment names"
+#           {site_name}_site_inventory_script1.rds (sampling dates)
+#           {site_name}_zones_labelled_script1.rds
 #
 # Outputs : {site_name}_field_observations_script6.csv/.rds
 #           (long table, one row per point per variable, with treat + zone)
-#           {site_name}_biomass_points_geo_script6.rds
 #           {site_name}_establishment_points_geo_script6.rds
-#           {site_name}_harvest_points_geo_script6.rds   (sf, with geometry)
+#           {site_name}_biomass_points_geo_script6.rds
+#           {site_name}_harvest_points_geo_script6.rds   (sf, with geometry,
+#           same column names as before, read by Script 7)
 #
-# TO RUN A DIFFERENT SITE: change site_name in SITE CONFIG below.
+# Site notes (see DECISIONS_LOG for detail):
+#   1. Walpeup MRS125 - harvest samples at the establishment points (same
+#      shapefile); pt 28 harvest = mean of two samples (28.1, 28.2).
+#   2. Brians House  - harvest has its own shapefile (same locations as
+#      establishment); flowering biomass n = 18 (pt 33 excluded as
+#      implausible; Excel pt 11 has no match in the sampling-plan shapefile,
+#      which has pt 111 - left unmatched); pt 20 yield + HI blank (grain
+#      spill); row spacing 0.3 m TO BE CONFIRMED.
+#
+# TO RUN A DIFFERENT SITE: change site_name in SITE CONFIG below, then check
+# the Section 4 table: points, missing values, zeros, and no_strip/no_zone
+# (points outside the analysed strips/zones) for every variable.
 # =============================================================================
 
 library(dplyr)
@@ -32,8 +57,8 @@ library(sf)
 library(stringr)
 
 # ============================== SITE CONFIG =================================
-site_name     <- "1.Walpeup_MRS125"
-#site_name     <- "2.Crystal_Brook_Brians_House"
+#site_name     <- "1.Walpeup_MRS125"
+site_name     <- "2.Crystal_Brook_Brians_House"
 base_path     <- "H:/Output-1"
 metadata_path <- file.path(base_path, "0.Site-info",
                            "names of treatments per site 2025 metadata and other info.xlsx")
