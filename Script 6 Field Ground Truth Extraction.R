@@ -33,6 +33,7 @@ library(stringr)
 
 # ============================== SITE CONFIG =================================
 site_name     <- "1.Walpeup_MRS125"
+#site_name     <- "2.Crystal_Brook_Brians_House"
 base_path     <- "H:/Output-1"
 metadata_path <- file.path(base_path, "0.Site-info",
                            "names of treatments per site 2025 metadata and other info.xlsx")
@@ -41,11 +42,10 @@ pipeline_output_base <- "H:/Output-1/Jackie notes processing etc/Drone_Vs_Satell
 output_folder         <- file.path(pipeline_output_base, site_name)
 
 
-row_spacing_m <- 0.3   # confirmed by Enqi - applies to both
-
-cut_length_biomass_m       <- 4     # from the Biomass file itself - matches its own stated kg/ha exactly
-cut_length_establishment_m <- 0.5   # per Enqi: default protocol is 4 rows x 0.5m
-
+# No row spacing, cut lengths or dates here any more:
+# - values come already converted (plants/m2, kg/ha, ...) from each file's
+#   checked "Jackie" sheet
+# - sampling dates come from the metadata via Script 1's inventory (Section 2)
 
 establishment_date <- as.Date("2025-05-19")
 biomass_flowering_date <- as.Date("2025-09-22")
@@ -75,182 +75,144 @@ strips_clean <- strips %>%
 zones_labelled <- readRDS(file.path(output_folder, paste0(site_name, "_zones_labelled_script1.rds")))
 zones_labelled <- st_make_valid(zones_labelled)
 
+# ---- 2. Field variables for this site, from the metadata ------------------
+# One row per variable: Excel data file + sheet, point shapefile, units and
+# sampling date. Sheet defaults to "Jackie" unless the metadata's "sheet name"
+# column says otherwise (only needed for workbooks shared between sites).
+# Variable names come from the metadata "units" sheet and must match the
+# Jackie sheet column headings exactly.
 
-# ---- 2. Read the trusted per-point Biomass_flowering values ----------------
-biomass_path <- site_files %>%
-  filter(variable == "Biomass_flowering data file") %>%
-  pull(`file path`)
+units_lookup <- read_excel(metadata_path, sheet = "units") %>%
+  select(variable = variable_clm_name, units = variable_units) %>%
+  filter(variable != "Establishment CV")          # not used downstream
 
-biomass_pts_data <- read_excel(file.path(base_path, site_name, biomass_path),
-                               sheet = "Jackie_MRS125")
+field_dates <- readRDS(file.path(output_folder, paste0(site_name, "_site_inventory_script1.rds"))) %>%
+  filter(source == "field") %>%
+  distinct(variable, date_sampled = date)
 
-biomass_pts_data
-# ---- 3. Check for a Biomass_flowering shapefile in metadata ---------------
-site_files %>% filter(str_detect(variable, "Biomass_flowering"))
+path_for <- function(var, suffix, col = "file path") {
+  x <- site_files[[col]][site_files$variable == paste(var, suffix)]
+  if (length(x) == 0) NA_character_ else as.character(x[1])
+}
 
+field_vars <- units_lookup %>%
+  rowwise() %>%
+  mutate(data_path = path_for(variable, "data file"),
+         sheet     = path_for(variable, "data file", col = "sheet name"),
+         shp_path  = path_for(variable, "shp file")) %>%
+  ungroup() %>%
+  mutate(sheet = coalesce(sheet, "Jackie")) %>%
+  left_join(field_dates, by = "variable") %>%
+  filter(!is.na(data_path), !is.na(shp_path))    # e.g. no Protein at Walpeup
 
-# ---- 4. Read the Biomass point shapefile and join Excel values by pt_id ---
-biomass_shp_path <- site_files %>%
-  filter(variable == "Biomass_flowering shp file") %>%
-  pull(`file path`)
-
-biomass_pts <- st_read(file.path(base_path, site_name, biomass_shp_path))
-
-names(biomass_pts)
-st_geometry_type(biomass_pts) %>% table()
-
-# Join the trusted Excel values onto the point geometry by pt_id
-biomass_pts_joined <- biomass_pts %>%
-  select(pt_id, geometry) %>%
-  left_join(biomass_pts_data, by = "pt_id")
-
-biomass_pts_joined %>% st_drop_geometry() %>% head(10)
-
-# Check: did every point get a matching biomass value?
-sum(is.na(biomass_pts_joined$Biomass_flowering))
+field_vars %>% select(variable, sheet, date_sampled, units)
 
 
-# ---- 5. Spatially join to strips_clean and zones_labelled (by location) ---
-biomass_joined <- biomass_pts_joined %>%
-  st_join(strips_clean %>% select(treat, treatment_name, plot_order)) %>%
-  st_join(zones_labelled %>% select(zone_code, zone_label))
+# ---- 3. Reader: one variable = Jackie sheet value + point location ---------
+# Values come already converted (plants/m2, kg/ha, ...) - no calculation here.
+# Treatment and zone are assigned by POINT LOCATION (spatial join), not by
+# the shapefile's own attributes.
 
-biomass_joined %>% st_drop_geometry()
+read_field_variable <- function(var, data_path, sheet, shp_path, date_sampled, units) {
+  values <- read_excel(file.path(base_path, site_name, data_path), sheet = sheet) %>%
+    rename_with(trimws) %>%
+    select(pt_id, value = all_of(var)) %>%
+    filter(!is.na(pt_id)) %>%
+    mutate(value = as.numeric(value))
+  
+  st_read(file.path(base_path, site_name, shp_path), quiet = TRUE) %>%
+    select(pt_id) %>%
+    left_join(values, by = "pt_id") %>%
+    st_join(strips_clean %>% select(treat, treatment_name, plot_order)) %>%
+    st_join(zones_labelled %>% select(zone_code, zone_label)) %>%
+    mutate(variable = var, units = units, date_sampled = date_sampled)
+}
 
-# Check: did every point land inside a strip and a zone?
-sum(is.na(biomass_joined$treat))
-sum(is.na(biomass_joined$zone_code))
+
+# ---- 4. Read every variable and check ---------------------------------------
+field_points <- do.call(rbind, lapply(seq_len(nrow(field_vars)), function(i) {
+  v <- field_vars[i, ]
+  read_field_variable(v$variable, v$data_path, v$sheet, v$shp_path, v$date_sampled, v$units)
+}))
+
+# Checks per variable: points, missing values, zeros, points outside a
+# strip/zone, value range, date and units
+field_points %>%
+  st_drop_geometry() %>%
+  group_by(variable) %>%
+  summarise(n_points  = n(),
+            n_missing = sum(is.na(value)),
+            n_zero    = sum(value == 0, na.rm = TRUE),
+            no_strip  = sum(is.na(treat)),
+            no_zone   = sum(is.na(zone_code)),
+            min       = round(min(value, na.rm = TRUE), 1),
+            median    = round(median(value, na.rm = TRUE), 1),
+            max       = round(max(value, na.rm = TRUE), 1),
+            date      = first(date_sampled),
+            units     = first(units),
+            .groups   = "drop") %>%
+  print(width = Inf)
 
 
-# ---- 6. Establishment: derive density using assumed row spacing/cut length
 
+# ---- 5. Point files for Script 7 (wide, one row per point, with geometry) --
+# Same object and column names as the earlier version of this script, so
+# Script 7 reads them unchanged.
 
-establishment_shp_path <- site_files %>%
-  filter(variable == "Establishment shp file") %>%
-  pull(`file path`)
+make_wide <- function(vars) {
+  vars <- intersect(vars, unique(field_points$variable))        # skip any not at this site
+  geo  <- field_points %>%
+    filter(variable == vars[1]) %>%
+    select(pt_id, treat, treatment_name, plot_order, zone_code, zone_label)
+  vals <- field_points %>%
+    st_drop_geometry() %>%
+    filter(variable %in% vars) %>%
+    select(pt_id, variable, value) %>%
+    tidyr::pivot_wider(names_from = variable, values_from = value)
+  left_join(geo, vals, by = "pt_id")
+}
 
-establishment_pts <- st_read(file.path(base_path, site_name, establishment_shp_path))
+establishment_derived <- make_wide("Establishment") %>%
+  rename(establishment_plants_m2 = Establishment)
 
-establishment_derived <- establishment_pts %>%
-  select(pt_id, Row1, Row2, Row3, Row4, geometry) %>%
-  mutate(
-    row_total       = Row1 + Row2 + Row3 + Row4,
-    mean_per_row    = row_total / 4,
-    establishment_plants_m2 = mean_per_row / (row_spacing_m * cut_length_establishment_m)
-  ) %>%
-  st_join(strips_clean %>% select(treat, treatment_name, plot_order)) %>%
-  st_join(zones_labelled %>% select(zone_code, zone_label))
+biomass_joined <- make_wide("Biomass_flowering")
 
-establishment_derived %>% st_drop_geometry() %>%
-  select(pt_id, treat, zone_label, row_total, establishment_plants_m2) %>%
-  arrange(desc(establishment_plants_m2))
-
-# Sanity check: does this look like a plausible wheat establishment rate?
-summary(establishment_derived$establishment_plants_m2)
-
-# ---- 7. Harvest-time variables: maturity biomass, yield, TGW, harvest index
-# All four come from the "Jackie" sheet of the Harvest Index workbook: one row
-# per point (48), already in kg/ha (biomass, yield), g/1000 grains (TGW) and %
-# (harvest index). Zeros would be treated as real, but this sheet has none.
-# Location -> treatment/zone is reused from establishment_derived (same points).
-
-harvest_path <- site_files %>%
-  filter(variable == "Biomass_maturity data file") %>%
-  pull(`file path`)
-
-harvest_data <- read_excel(file.path(base_path, site_name, harvest_path),
-                           sheet = "Jackie") %>%
-  rename_with(trimws) %>%    # "Biomass_maturity " has a trailing space
-  select(pt_id,
-         Biomass_maturity,
-         Grain_yield           = `Grain yield`,
+harvest_derived <- make_wide(c("Biomass_maturity", "Grain yield",
+                               "Thousand grain weight", "Harvest index", "Protein")) %>%
+  rename(Grain_yield           = `Grain yield`,
          Thousand_grain_weight = `Thousand grain weight`,
          Harvest_index         = `Harvest index`)
 
-harvest_derived <- establishment_derived %>%
-  select(pt_id, treat, treatment_name, plot_order, zone_code, zone_label, geometry) %>%
-  left_join(harvest_data, by = "pt_id")
+# Checks: one row per point in each file (a point in two polygons would duplicate)
+c(establishment = nrow(establishment_derived),
+  biomass       = nrow(biomass_joined),
+  harvest       = nrow(harvest_derived))
+c(establishment = anyDuplicated(establishment_derived$pt_id),
+  biomass       = anyDuplicated(biomass_joined$pt_id),
+  harvest       = anyDuplicated(harvest_derived$pt_id))   # all should be 0
 
-# Checks: all 48 points matched, no NAs in any variable
-nrow(harvest_derived)
-harvest_derived %>% st_drop_geometry() %>%
-  summarise(across(c(Biomass_maturity, Grain_yield, Thousand_grain_weight, Harvest_index),
-                   ~ sum(is.na(.x))))
-
-# Plausibility check on the pt_id -> location assumption (see notes below)
-harvest_derived %>% st_drop_geometry() %>%
-  group_by(zone_label, treat) %>%
-  summarise(mean_yield_kg_ha = round(mean(Grain_yield)), .groups = "drop") %>%
-  arrange(zone_label, mean_yield_kg_ha) %>%
-  print(n = Inf)
-
-
-# ---- 8. Combine Biomass and Establishment into one field observations df --
-
-
-biomass_long <- biomass_joined %>%
+# ---- 6. Long table: one row per point per variable (no geometry) ----------
+# Variable names use underscores (Grain_yield etc.), as in earlier versions.
+field_observations <- field_points %>%
   st_drop_geometry() %>%
-  transmute(
-    pt_id, treat, treatment_name, plot_order, zone_code, zone_label,
-    variable      = "Biomass_flowering",
-    value         = Biomass_flowering,
-    units         = "kg/ha",
-    date_sampled  = biomass_flowering_date,
-    standardised  = TRUE
-  )
-
-establishment_long <- establishment_derived %>%
-  st_drop_geometry() %>%
-  transmute(
-    pt_id, treat, treatment_name, plot_order, zone_code, zone_label,
-    variable      = "Establishment",
-    value         = establishment_plants_m2,
-    units         = "plants/m2",
-    date_sampled  = establishment_date,
-    standardised  = TRUE
-  )
-make_long <- function(df, col, var_name, unit_label, sample_date) {
-  df %>%
-    st_drop_geometry() %>%
-    transmute(
-      pt_id, treat, treatment_name, plot_order, zone_code, zone_label,
-      variable     = var_name,
-      value        = .data[[col]],
-      units        = unit_label,
-      date_sampled = sample_date,
-      standardised = TRUE
-    )
-}
-
-harvest_long <- bind_rows(
-  make_long(harvest_derived, "Biomass_maturity",      "Biomass_maturity",      "kg/ha",         maturity_date),
-  make_long(harvest_derived, "Grain_yield",           "Grain_yield",           "kg/ha",         maturity_date),
-  make_long(harvest_derived, "Thousand_grain_weight", "Thousand_grain_weight", "g/1000 grains", maturity_date),
-  make_long(harvest_derived, "Harvest_index",         "Harvest_index",         "%",             maturity_date)
-)
-
-field_observations <- bind_rows(biomass_long, establishment_long, harvest_long) %>%
+  transmute(pt_id, treat, treatment_name, plot_order, zone_code, zone_label,
+            variable = gsub(" ", "_", variable),
+            value, units, date_sampled) %>%
   arrange(variable, plot_order, zone_label)
 
-field_observations %>% count(variable, date_sampled, standardised)
+field_observations %>% count(variable, date_sampled, units)
 
 
-
-# ---- 9. Save the combined field observations table -------------------------
+# ---- 7. Save -----------------------------------------------------------------
+# Long table (csv + rds) and the three point files WITH geometry for Script 7
 write_csv(field_observations,
           file.path(output_folder, paste0(site_name, "_field_observations_script6.csv")))
+saveRDS(field_observations,
+        file.path(output_folder, paste0(site_name, "_field_observations_script6.rds")))
+
 saveRDS(establishment_derived,
         file.path(output_folder, paste0(site_name, "_establishment_points_geo_script6.rds")))
-saveRDS(harvest_derived,
-        file.path(output_folder, paste0(site_name, "_harvest_points_geo_script6.rds")))
-
-
-# ---- Save the point-level sf objects (WITH geometry) for Script 7 ---------
-# field_observations (below) flattens to a table with no coordinates - these
-# two keep the actual point geometry, so Script 7 can extract NDVI at each
-# point's real location rather than rebuilding this from scratch.
-
 saveRDS(biomass_joined,
         file.path(output_folder, paste0(site_name, "_biomass_points_geo_script6.rds")))
-saveRDS(establishment_derived,
-        file.path(output_folder, paste0(site_name, "_establishment_points_geo_script6.rds")))
+saveRDS(harvest_derived,
+        file.path(output_folder, paste0(site_name, "_harvest_points_geo_script6.rds")))
