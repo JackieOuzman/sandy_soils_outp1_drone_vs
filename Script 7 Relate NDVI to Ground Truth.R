@@ -2,35 +2,38 @@
 # Script 7: Relate NDVI/NDRE to Ground Truth
 # -----------------------------------------------------------------------------
 # Purpose : Point-by-point calibration of NDVI AND NDRE against field
-#           measurements (Establishment, Biomass_flowering). For each field
-#           sample point, extracts a buffered mean (1m radius) from the
-#           nearest-date raster - not a zone-wide average - so the
-#           comparison reflects the actual measurement location. Buffer
-#           absorbs GPS positional error and local pixel noise.
+#           measurements (Establishment, Biomass_flowering, and the harvest
+#           variables). For each field sample point, extracts a buffered mean
+#           (1 m radius) from the nearest-date raster - not a zone-wide
+#           average - so the comparison reflects the actual measurement
+#           location. Buffer absorbs GPS positional error and local pixel noise.
 #           Satellite NDRE uses the raw 10-band stack (raw_path, see Script
 #           1/2/3); Planet NDRE uses its Red Edge band (see Script 2b/3b).
-#           Drone excluded entirely: no red-edge band available (no NDRE
-#           possible), AND nearest drone date is 38 days from Establishment
-#           sampling / 10 days from Biomass sampling - too large a gap given
-#           how fast NDVI moves through the season (see Script 2 QC).
+#           Sampling dates come from the metadata (via Script 1's inventory).
+#           Drone: NDVI only (no red-edge band), and only where a flight is
+#           within drone_max_gap_days (7) of sampling - Establishment and
+#           Biomass_flowering only. Walpeup: excluded (38 / 10 days).
+#           Brians House: included for Establishment (4 days).
+#           Harvest tests stay satellite + Planet only: the 8 pre-specified
+#           tests (Bonferroni 0.05/8) were fixed before the drone rule.
+#           Missing field values (e.g. Brians House pt 33, pt 20) are skipped
+#           pairwise in every correlation.
 #
 # Inputs  : {site_name}_biomass_points_geo_script6.rds
 #           {site_name}_establishment_points_geo_script6.rds
 #           {site_name}_site_inventory_script1.rds  (raster paths by date;
 #           satellite rows need raw_path, planet rows need mask_path)
 #
-# Outputs : {site_name}_establishment_groundtruth_pointlevel_script7.csv/.rds
-#           {site_name}_biomass_groundtruth_pointlevel_script7.csv/.rds
-#           {site_name}_groundtruth_correlation_summary_script7.csv/.rds
-#           {site_name}_biomass_vs_ndvi_script7.png
+# Outputs : {site_name}_groundtruth_correlation_pvalues_script7.csv/.rds
+#           {site_name}_establishment_vs_ndvi_script7.png
 #           {site_name}_harvest_groundtruth_pointlevel_script7.csv/.rds
+#           {site_name}_harvest_correlations_script7.csv/.rds
 #           {site_name}_harvest_correlations_adjusted_script7.csv/.rds
 #           (same tests re-fitted within treatment, and within treatment + zone)
-#           (harvest variables vs FLOWERING-date NDVI/NDRE - the crop is senescent
-#           at the 26 Nov harvest sampling, so same-day NDVI says little about yield)
-#           {site_name}_biomass_vs_ndvi_script7.png
-#           {site_name}_planet_raster_qc_script2b.rds  (excluded_cloud flag)
-#           {site_name}_groundtruth_correlation_pvalues_script7.csv/.rds
+#           Harvest variables are compared with FLOWERING-date NDVI/NDRE - the
+#           crop is senescent at harvest sampling, so same-day NDVI says little.
+#           (Also reads {site_name}_planet_raster_qc_script2b.rds for the
+#           excluded_cloud flag, and _harvest_points_geo_script6.rds.)
 #           
 #           
 #
@@ -46,13 +49,22 @@ library(ggplot2)
 
 # ============================== SITE CONFIG =================================
 site_name     <- "1.Walpeup_MRS125"
+#site_name     <- "2.Crystal_Brook_Brians_House"
 pipeline_output_base <- "H:/Output-1/Jackie notes processing etc/Drone_Vs_Satellite"
 output_folder         <- file.path(pipeline_output_base, site_name)
 
 buffer_m <- 1   # radius around each point - absorbs GPS error + pixel noise
 
-establishment_date     <- as.Date("2025-05-19")
-biomass_flowering_date <- as.Date("2025-09-22")
+drone_max_gap_days <- 7   # drone used only if a flight is within this many days of sampling
+# =============================================================================
+
+# Sampling dates from the metadata (via Script 1's inventory), not hard-coded
+field_dates <- readRDS(file.path(output_folder, paste0(site_name, "_site_inventory_script1.rds"))) %>%
+  filter(source == "field")
+establishment_date     <- field_dates$date[field_dates$variable == "Establishment"][1]
+biomass_flowering_date <- field_dates$date[field_dates$variable == "Biomass_flowering"][1]
+
+establishment_date; biomass_flowering_date   # check
 # =============================================================================
 
 # ---- 1. Load point geometry (Script 6) and raster inventory (Script 1) ----
@@ -83,6 +95,18 @@ bio_sat_date    <- nearest_date("satellite", biomass_flowering_date, site_invent
 bio_planet_date <- nearest_date("planet", biomass_flowering_date, site_inventory)
 
 est_sat_date; est_planet_date; bio_sat_date; bio_planet_date
+
+# ---- 2b. Drone: nearest flight, used only if within drone_max_gap_days ------
+drone_match <- function(target_date) {
+  if (!any(site_inventory$source == "drone")) return(as.Date(NA))
+  d <- nearest_date("drone", target_date, site_inventory)
+  if (abs(as.numeric(d - target_date)) <= drone_max_gap_days) d else as.Date(NA)
+}
+
+est_drone_date <- drone_match(establishment_date)
+bio_drone_date <- drone_match(biomass_flowering_date)
+
+est_drone_date; bio_drone_date   # NA = no flight close enough, drone left out
 
 # ---- 3. Functions: build NDVI+NDRE raster stacks for satellite and Planet -
 satellite_indices_raster <- function(file_path, raw_path) {
@@ -152,6 +176,18 @@ biomass_pts <- biomass_pts %>%
     ndre_planet    = bio_planet_idx$mean.NDRE
   )
 
+# Drone NDVI (no NDRE - no red-edge band). All NA if no flight within
+# drone_max_gap_days of sampling (Section 2b), so the drone simply drops out.
+drone_ndvi_at_points <- function(drone_date, points_sf) {
+  if (is.na(drone_date)) return(rep(NA_real_, nrow(points_sf)))
+  r <- rast(get_path("drone", drone_date))
+  NAflag(r) <- 0                                   # same no-data rule as Scripts 2/3
+  exact_extract(r, st_buffer(points_sf$geometry, dist = buffer_m), fun = "mean")
+}
+
+establishment_pts$ndvi_drone <- drone_ndvi_at_points(est_drone_date, establishment_pts)
+biomass_pts$ndvi_drone       <- drone_ndvi_at_points(bio_drone_date, biomass_pts)
+
 establishment_pts %>% st_drop_geometry() %>%
   select(pt_id, treat, establishment_plants_m2, ndvi_satellite, ndre_satellite, ndvi_planet, ndre_planet)
 
@@ -162,23 +198,37 @@ biomass_pts %>% st_drop_geometry() %>%
 correlation_summary <- tibble(
   variable          = rep(c("Establishment", "Biomass_flowering"), each = 2),
   metric            = rep(c("NDVI", "NDRE"), times = 2),
+  # use = "complete.obs": skip points with a missing field value (e.g. pt 33
+  # biomass at Brians House) - same points as cor.test() uses in Section 7b
   cor_satellite = c(
-    cor(establishment_pts$establishment_plants_m2, establishment_pts$ndvi_satellite),
-    cor(establishment_pts$establishment_plants_m2, establishment_pts$ndre_satellite),
-    cor(biomass_pts$Biomass_flowering, biomass_pts$ndvi_satellite),
-    cor(biomass_pts$Biomass_flowering, biomass_pts$ndre_satellite)
+    cor(establishment_pts$establishment_plants_m2, establishment_pts$ndvi_satellite, use = "complete.obs"),
+    cor(establishment_pts$establishment_plants_m2, establishment_pts$ndre_satellite, use = "complete.obs"),
+    cor(biomass_pts$Biomass_flowering, biomass_pts$ndvi_satellite, use = "complete.obs"),
+    cor(biomass_pts$Biomass_flowering, biomass_pts$ndre_satellite, use = "complete.obs")
   ),
   cor_planet = c(
-    cor(establishment_pts$establishment_plants_m2, establishment_pts$ndvi_planet),
-    cor(establishment_pts$establishment_plants_m2, establishment_pts$ndre_planet),
-    cor(biomass_pts$Biomass_flowering, biomass_pts$ndvi_planet),
-    cor(biomass_pts$Biomass_flowering, biomass_pts$ndre_planet)
+    cor(establishment_pts$establishment_plants_m2, establishment_pts$ndvi_planet, use = "complete.obs"),
+    cor(establishment_pts$establishment_plants_m2, establishment_pts$ndre_planet, use = "complete.obs"),
+    cor(biomass_pts$Biomass_flowering, biomass_pts$ndvi_planet, use = "complete.obs"),
+    cor(biomass_pts$Biomass_flowering, biomass_pts$ndre_planet, use = "complete.obs")
   )
 )
 
 correlation_summary
 
+# Drone (NDVI only): NA where no flight within drone_max_gap_days, and for NDRE rows
+cor_or_na <- function(x, y) if (all(is.na(x))) NA_real_ else cor(x, y, use = "complete.obs")
+p_or_na   <- function(x, y) if (all(is.na(x))) NA_real_ else cor.test(x, y)$p.value
+
+correlation_summary <- correlation_summary %>%
+  mutate(cor_drone = c(cor_or_na(establishment_pts$ndvi_drone, establishment_pts$establishment_plants_m2), NA,
+                       cor_or_na(biomass_pts$ndvi_drone,       biomass_pts$Biomass_flowering),             NA))
+
+correlation_summary
+
 # ---- 7b. p-values for the correlations above (two-sided cor.test) ---------
+
+
 correlation_pvalues <- tibble(
   variable = rep(c("Establishment", "Biomass_flowering"), each = 2),
   metric   = rep(c("NDVI", "NDRE"), times = 2),
@@ -195,6 +245,10 @@ correlation_pvalues <- tibble(
     cor.test(biomass_pts$Biomass_flowering, biomass_pts$ndre_planet)$p.value
   )
 )
+
+correlation_pvalues <- correlation_pvalues %>%
+  mutate(p_drone = c(p_or_na(establishment_pts$ndvi_drone, establishment_pts$establishment_plants_m2), NA,
+                     p_or_na(biomass_pts$ndvi_drone,       biomass_pts$Biomass_flowering),             NA))
 
 correlation_pvalues
 

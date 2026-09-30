@@ -33,7 +33,8 @@ library(sf)
 library(terra)     
 
 # ============================== SITE CONFIG =================================
-site_name     <- "1.Walpeup_MRS125"
+#site_name     <- "1.Walpeup_MRS125"
+site_name     <- "2.Crystal_Brook_Brians_House"
 base_path     <- "H:/Output-1"
 metadata_path <- file.path(base_path, "0.Site-info",
                            "names of treatments per site 2025 metadata and other info.xlsx")
@@ -211,6 +212,9 @@ table_s1
 readr::write_csv(table_s1,
                  file.path(output_folder, paste0(site_name, "_table_S1_anova_full_MS.csv")))
 
+################################################################################
+### Below this is site 1 specific analysis / reporting #########################
+
 
 # ---- 6. Table: Spade vs non-Spade NDVI by zone (Results 3.3) --------------
 # Both drone flight dates, plus the nearest Planet and Sentinel-2 image to
@@ -311,6 +315,10 @@ ggsave(file.path(output_folder, paste0(site_name, "_fig_resolution_by_zone_MS.pn
        fig_resolution, width = 10, height = 5.5, dpi = 300)
 
 
+
+################################################################################
+#### is can be used for multiple sites ########################################
+
 # ---- 8. Figure 4: field measurements vs NDVI, Planet and Sentinel-2 (Results 3.5)
 # One panel per field variable x source, points coloured Spade vs non-Spade.
 # Built from Script 7's saved point-level tables (1 m buffered NDVI at each
@@ -326,16 +334,20 @@ gt_harv <- readRDS(file.path(output_folder, paste0(site_name, "_harvest_groundtr
 var_levels <- c("Establishment (plants/m²)", "Flowering biomass (kg/ha)", "Grain yield (kg/ha)")
 
 gt_long <- bind_rows(
-  gt_est  %>% transmute(treat, variable = var_levels[1], value = establishment_plants_m2,
-                        Planet = ndvi_planet, `Sentinel-2` = ndvi_satellite),
-  gt_bio  %>% transmute(treat, variable = var_levels[2], value = Biomass_flowering,
-                        Planet = ndvi_planet, `Sentinel-2` = ndvi_satellite),
-  gt_harv %>% transmute(treat, variable = var_levels[3], value = Grain_yield,
-                        Planet = ndvi_planet, `Sentinel-2` = ndvi_satellite)
+  gt_est  %>% transmute(treat, treatment_name, variable = var_levels[1], value = establishment_plants_m2,
+                        Planet = ndvi_planet, `Sentinel-2` = ndvi_satellite, Drone = ndvi_drone),
+  gt_bio  %>% transmute(treat, treatment_name, variable = var_levels[2], value = Biomass_flowering,
+                        Planet = ndvi_planet, `Sentinel-2` = ndvi_satellite, Drone = ndvi_drone),
+  gt_harv %>% transmute(treat, treatment_name, variable = var_levels[3], value = Grain_yield,
+                        Planet = ndvi_planet, `Sentinel-2` = ndvi_satellite)   # no drone for harvest
 ) %>%
-  tidyr::pivot_longer(c(Planet, `Sentinel-2`), names_to = "source", values_to = "ndvi") %>%
-  mutate(group    = if_else(grepl("S", treat), "Spade", "Non-Spade"),   # WALPEUP-SPECIFIC
-         variable = factor(variable, levels = var_levels))
+  tidyr::pivot_longer(c(Planet, `Sentinel-2`, Drone), names_to = "source", values_to = "ndvi") %>%
+  filter(!is.na(ndvi)) %>%   # drops Drone wherever no flight within 7 days (all of Walpeup)
+  mutate(group    = if (site_name == "1.Walpeup_MRS125") {
+    if_else(grepl("S", treat), "Spade", "Non-Spade")    # Walpeup factorial (log 5.6)
+  } else treatment_name,                                 # other sites: each treatment
+  source   = factor(source, levels = c("Planet", "Sentinel-2", "Drone")),
+  variable = factor(variable, levels = var_levels))
 
 # r per panel (should match Script 7's saved correlations)
 r_labels <- gt_long %>%
@@ -351,18 +363,27 @@ r_labels   # check: 6 rows
 gt_long <- gt_long %>%
   left_join(r_labels %>% select(variable, source, label), by = c("variable", "source")) %>%
   mutate(panel = paste0(c("Establishment", "Flowering biomass", "Grain yield")[as.integer(variable)],
-                        " — ", source, " (", label, ")"))   # short name, no units
-
+                        " — ", source, " (", label, ")"),   # short name, no units
+         panel = factor(panel, levels = unique(panel[order(variable, source)])))
 y_titles <- c("plants/m²", "kg/ha", "kg/ha")
 
 # One row per field variable, with its own y-axis title; Planet and
 # Sentinel-2 side by side, each with its own NDVI range
+# Point colours: Walpeup = Spade vs non-Spade; other sites = each treatment,
+# using its colour from the metadata "treatment names" sheet
+group_colours <- if (site_name == "1.Walpeup_MRS125") {
+  c("Non-Spade" = "#6BAED6", "Spade" = "#E6550D")
+} else {
+  tn <- read_excel(metadata_path, sheet = "treatment names") %>% filter(Site == site_name)
+  setNames(tn$Hex, tn$`Shorthand Name`)
+}
+
 make_gt_row <- function(i) {
   ggplot(filter(gt_long, variable == var_levels[i]), aes(x = ndvi, y = value)) +
     geom_smooth(method = "lm", se = TRUE, colour = "grey30", linewidth = 0.6) +
     geom_point(aes(colour = group), size = 2.5, alpha = 0.8) +
-    facet_wrap(~ panel, scales = "free_x") +
-    scale_colour_manual(values = c("Non-Spade" = "#6BAED6", "Spade" = "#E6550D")) +
+    facet_wrap(~ panel, scales = "free_x", nrow = 1) +   # one row per variable (3 panels if drone)
+    scale_colour_manual(values = group_colours) +
     labs(x = if (i == 3) "NDVI" else NULL, y = y_titles[i], colour = NULL) +
     theme_minimal(base_size = 14)
 }
