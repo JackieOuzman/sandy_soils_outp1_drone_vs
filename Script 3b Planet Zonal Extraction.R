@@ -39,7 +39,10 @@ library(exactextractr)
 # ============================== SITE CONFIG =================================
 #site_name     <- "1.Walpeup_MRS125"
 #site_name     <- "2.Crystal_Brook_Brians_House"
-site_name     <- "3.Wynarka_Mervs_West"
+#site_name     <- "3.Wynarka_Mervs_West"
+site_name     <- "4.Wharminda_Woodys"
+
+
 base_path     <- "H:/Output-1"
 metadata_path <- file.path(base_path, "0.Site-info",
                            "names of treatments per site 2025 metadata and other info.xlsx")
