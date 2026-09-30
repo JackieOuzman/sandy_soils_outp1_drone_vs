@@ -39,7 +39,9 @@ library(terra)
 
 # ============================== SITE CONFIG =================================
 #site_name     <- "1.Walpeup_MRS125"
-site_name     <- "2.Crystal_Brook_Brians_House"
+#site_name     <- "2.Crystal_Brook_Brians_House"
+site_name     <- "3.Wynarka_Mervs_West"
+
 pipeline_output_base <- "H:/Output-1/Jackie notes processing etc/Drone_Vs_Satellite"
 output_folder         <- file.path(pipeline_output_base, site_name)
 # =============================================================================
