@@ -59,7 +59,8 @@ library(stringr)
 # ============================== SITE CONFIG =================================
 #site_name     <- "1.Walpeup_MRS125"
 #site_name     <- "2.Crystal_Brook_Brians_House"
-site_name     <- "3.Wynarka_Mervs_West"
+#site_name     <- "3.Wynarka_Mervs_West"
+site_name     <- "4.Wharminda_Woodys"
 
 base_path     <- "H:/Output-1"
 metadata_path <- file.path(base_path, "0.Site-info",
@@ -211,9 +212,9 @@ biomass_joined <- make_wide("Biomass_flowering")
 
 harvest_derived <- make_wide(c("Biomass_maturity", "Grain yield",
                                "Thousand grain weight", "Harvest index", "Protein")) %>%
-  rename(Grain_yield           = `Grain yield`,
-         Thousand_grain_weight = `Thousand grain weight`,
-         Harvest_index         = `Harvest index`)
+  rename(any_of(c(Grain_yield           = "Grain yield",              # any_of(): skip any
+                  Thousand_grain_weight = "Thousand grain weight",    # variable not measured
+                  Harvest_index         = "Harvest index")))          # at this site (e.g. no TGW at Woodys)
 
 # Checks: one row per point in each file (a point in two polygons would duplicate)
 c(establishment = nrow(establishment_derived),
