@@ -60,7 +60,8 @@ library(stringr)
 #site_name     <- "1.Walpeup_MRS125"
 #site_name     <- "2.Crystal_Brook_Brians_House"
 #site_name     <- "3.Wynarka_Mervs_West"
-site_name     <- "4.Wharminda_Woodys"
+#site_name     <- "4.Wharminda_Woodys"
+site_name     <- "5.Walpeup_Gums"
 
 base_path     <- "H:/Output-1"
 metadata_path <- file.path(base_path, "0.Site-info",
@@ -168,6 +169,19 @@ field_points <- do.call(rbind, lapply(seq_len(nrow(field_vars)), function(i) {
 field_points %>% st_drop_geometry() %>% filter(is.na(treat)) %>% count(variable, name = "n_excluded")
 field_points <- field_points %>% filter(!is.na(treat))
 
+# Variables with no values at all at this site are dropped, with a message
+# (e.g. Walpeup Gums: TGW and Protein columns are kept, empty, in the Excel
+# file to show they were not measured). Avoids empty variables reaching Script 7.
+empty_vars <- field_points %>%
+  st_drop_geometry() %>%
+  group_by(variable) %>%
+  summarise(all_na = all(is.na(value)), .groups = "drop") %>%
+  filter(all_na) %>%
+  pull(variable)
+if (length(empty_vars) > 0) message("Dropping variables with no values at this site: ",
+                                    paste(empty_vars, collapse = ", "))
+field_points <- field_points %>% filter(!variable %in% empty_vars)
+
 # Checks per variable: points, missing values, zeros, points outside a
 # strip/zone, value range, date and units
 field_points %>%
@@ -249,3 +263,19 @@ saveRDS(biomass_joined,
         file.path(output_folder, paste0(site_name, "_biomass_points_geo_script6.rds")))
 saveRDS(harvest_derived,
         file.path(output_folder, paste0(site_name, "_harvest_points_geo_script6.rds")))
+
+
+
+field_points %>%
+  st_drop_geometry() %>%
+  as_tibble() %>%
+  group_by(variable) %>%
+  summarise(n_points  = n(),
+            n_missing = sum(is.na(value)),
+            n_zero    = sum(value == 0, na.rm = TRUE),
+            no_strip  = sum(is.na(treat)),
+            no_zone   = sum(is.na(zone_code)),
+            median    = round(median(value, na.rm = TRUE), 1),
+            .groups   = "drop") %>%
+  print(width = Inf)
+
