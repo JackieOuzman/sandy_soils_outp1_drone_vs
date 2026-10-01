@@ -50,7 +50,8 @@ library(ggplot2)
 # ============================== SITE CONFIG =================================
 #site_name     <- "1.Walpeup_MRS125"
 #site_name     <- "2.Crystal_Brook_Brians_House"
-site_name     <- "3.Wynarka_Mervs_West"
+#site_name     <- "3.Wynarka_Mervs_West"
+site_name     <- "4.Wharminda_Woodys"
 
 
 pipeline_output_base <- "H:/Output-1/Jackie notes processing etc/Drone_Vs_Satellite"
@@ -338,7 +339,8 @@ cor_row <- function(variable, source, metric) {
 }
 
 harvest_correlations <- tidyr::expand_grid(
-  variable = c("Grain_yield", "Biomass_maturity", "Thousand_grain_weight", "Harvest_index"),
+  variable = intersect(c("Grain_yield", "Biomass_maturity", "Thousand_grain_weight", "Harvest_index"),
+                       names(harvest_pts)),   # skip variables not measured at this site (e.g. no TGW at Woodys)
   source   = c("satellite", "planet"),
   metric   = c("NDVI", "NDRE")
 ) %>%
