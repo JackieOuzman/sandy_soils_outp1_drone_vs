@@ -46,11 +46,13 @@ library(sf)
 library(terra)
 library(exactextractr)
 
+
 # ============================== SITE CONFIG =================================
 #site_name     <- "1.Walpeup_MRS125"
 #site_name     <- "2.Crystal_Brook_Brians_House"
 #site_name     <- "3.Wynarka_Mervs_West"
-site_name     <- "4.Wharminda_Woodys"
+#site_name     <- "4.Wharminda_Woodys"
+site_name     <- "5.Walpeup_Gums"
 
 
 base_path     <- "H:/Output-1"
