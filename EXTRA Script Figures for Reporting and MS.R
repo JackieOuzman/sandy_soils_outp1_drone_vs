@@ -35,7 +35,8 @@ library(terra)
 # ============================== SITE CONFIG =================================
 #site_name     <- "1.Walpeup_MRS125"
 #site_name     <- "2.Crystal_Brook_Brians_House"
-site_name     <- "3.Wynarka_Mervs_West"
+#site_name     <- "3.Wynarka_Mervs_West"
+site_name     <- "4.Wharminda_Woodys"
 
 
 base_path     <- "H:/Output-1"
