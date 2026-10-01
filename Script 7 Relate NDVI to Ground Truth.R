@@ -51,8 +51,8 @@ library(ggplot2)
 #site_name     <- "1.Walpeup_MRS125"
 #site_name     <- "2.Crystal_Brook_Brians_House"
 #site_name     <- "3.Wynarka_Mervs_West"
-site_name     <- "4.Wharminda_Woodys"
-
+#site_name     <- "4.Wharminda_Woodys"
+site_name     <- "5.Walpeup_Gums"
 
 pipeline_output_base <- "H:/Output-1/Jackie notes processing etc/Drone_Vs_Satellite"
 output_folder         <- file.path(pipeline_output_base, site_name)
@@ -432,3 +432,14 @@ est_sat_date; est_planet_date; bio_sat_date; bio_planet_date; est_drone_date; bi
 
 readRDS(file.path(output_folder, paste0(site_name, "_harvest_correlations_script7.rds"))) %>%
   filter(set == "exploratory") %>% print(n = Inf)
+
+
+
+
+### Check
+est_sat_date; est_planet_date; bio_sat_date; bio_planet_date; est_drone_date; bio_drone_date
+correlation_summary
+correlation_pvalues
+print(harvest_adjusted_compare, n = Inf)
+harvest_correlations %>% filter(set == "exploratory") %>% print(n = Inf)
+print(harvest_adjusted_compare, n = Inf)
