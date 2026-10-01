@@ -37,7 +37,8 @@ library(sf)
 #site_name     <- "1.Walpeup_MRS125"
 #site_name     <- "2.Crystal_Brook_Brians_House"
 #site_name     <- "3.Wynarka_Mervs_West"
-site_name     <- "4.Wharminda_Woodys"
+#site_name     <- "4.Wharminda_Woodys"
+site_name     <- "5.Walpeup_Gums"
 
 
 base_path     <- "H:/Output-1"
@@ -285,3 +286,18 @@ site_inventory %>% count(source, variable)
 # Zone codes and labels
 zones_labelled %>% st_drop_geometry() %>% distinct()
 
+
+
+site_inventory %>% count(source, variable)
+zones_labelled %>% st_drop_geometry() %>% distinct()
+
+site_inventory %>%
+  filter(source %in% c("drone", "field")) %>%
+  select(date, source, variable) %>%
+  arrange(date)
+
+site_inventory %>%
+  filter(source %in% c("planet", "satellite")) %>%
+  group_by(source) %>%
+  summarise(first = min(date), last = max(date), n = n(),
+            in_season = sum(date >= sowing_date & date <= harvest_date))
