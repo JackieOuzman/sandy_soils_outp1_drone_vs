@@ -37,7 +37,8 @@ library(terra)
 #site_name     <- "2.Crystal_Brook_Brians_House"
 #site_name     <- "3.Wynarka_Mervs_West"
 #site_name     <- "4.Wharminda_Woodys"
-site_name     <- "5.Walpeup_Gums"
+#site_name     <- "5.Walpeup_Gums"
+site_name     <- "6.Crystal_Brook_Randals"
 
 
 base_path     <- "H:/Output-1"

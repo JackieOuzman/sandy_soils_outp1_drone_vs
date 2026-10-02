@@ -52,7 +52,8 @@ library(ggplot2)
 #site_name     <- "2.Crystal_Brook_Brians_House"
 #site_name     <- "3.Wynarka_Mervs_West"
 #site_name     <- "4.Wharminda_Woodys"
-site_name     <- "5.Walpeup_Gums"
+#site_name     <- "5.Walpeup_Gums"
+site_name     <- "6.Crystal_Brook_Randals"
 
 pipeline_output_base <- "H:/Output-1/Jackie notes processing etc/Drone_Vs_Satellite"
 output_folder         <- file.path(pipeline_output_base, site_name)
@@ -443,3 +444,4 @@ correlation_pvalues
 print(harvest_adjusted_compare, n = Inf)
 harvest_correlations %>% filter(set == "exploratory") %>% print(n = Inf)
 print(harvest_adjusted_compare, n = Inf)
+

@@ -38,8 +38,8 @@ library(tidyr)
 #site_name     <- "2.Crystal_Brook_Brians_House"
 #site_name     <- "3.Wynarka_Mervs_West"
 #site_name     <- "4.Wharminda_Woodys"
-site_name     <- "5.Walpeup_Gums"
-
+#site_name     <- "5.Walpeup_Gums"
+site_name     <- "6.Crystal_Brook_Randals"
 
 pipeline_output_base <- "H:/Output-1/Jackie notes processing etc/Drone_Vs_Satellite"
 output_folder         <- file.path(pipeline_output_base, site_name)
@@ -75,7 +75,7 @@ long_data
 # x drone+matched-satellite).
 
 run_anova <- function(df) {
-  model <- aov(value ~ treat + zone_label, data = df)
+  model <- aov(value ~ zone_label + treat, data = df)   # zone first: treatment tested after zone (matters only if a treatment is missing from a zone, e.g. Randals)
   broom::tidy(model) %>% filter(term == "treat")
 }
 
@@ -216,7 +216,7 @@ zone_compare <- long_data %>%
   group_by(date, source, metric) %>%
   group_modify(~ {
     no_zone   <- broom::tidy(aov(value ~ treat, data = .x))
-    with_zone <- broom::tidy(aov(value ~ treat + zone_label, data = .x))
+    with_zone <- broom::tidy(aov(value ~ zone_label + treat, data = .x))   # zone first (see Section 3)
     tibble(
       F_treat_nozone   = no_zone$statistic[no_zone$term == "treat"],
       p_treat_nozone   = no_zone$p.value[no_zone$term == "treat"],
