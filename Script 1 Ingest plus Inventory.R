@@ -34,11 +34,11 @@ library(sf)
 
 
 # ============================== SITE CONFIG =================================
-#site_name     <- "1.Walpeup_MRS125"
+site_name     <- "1.Walpeup_MRS125"
 #site_name     <- "2.Crystal_Brook_Brians_House"
 #site_name     <- "3.Wynarka_Mervs_West"
 #site_name     <- "4.Wharminda_Woodys"
-site_name     <- "5.Walpeup_Gums"
+#site_name     <- "5.Walpeup_Gums"
 
 
 base_path     <- "H:/Output-1"
@@ -54,6 +54,8 @@ planet_folder <- file.path(base_path, site_name,
 
 pipeline_output_base <- "H:/Output-1/Jackie notes processing etc/Drone_Vs_Satellite"
 output_folder         <- file.path(pipeline_output_base, site_name)
+
+season_year <- 2025   # which Year to read from the "Plant sampling notes" and "seasons" sheets
 
 # Zone shapefile's column name is site-specific and NOT reliable from the
 # metadata sheet ("zone names clm heading name" field has drifted out of
@@ -160,31 +162,25 @@ planet_inventory <- planet_images %>%
 
 planet_inventory
 
-# ---- 4. Field observation inventory, pulled from site_files ---------------
-# Dates and file paths live on separate rows in the metadata (e.g.
-# "Establishment date collected" vs "Establishment data file"), so join them
-# together on the shared variable stem. "CV" variables are dropped since
-# they're a summary stat of the same collection event, not a separate date.
 
-field_dates <- site_files %>%
-  filter(str_detect(variable, "date collected"),
-         !str_detect(variable, "CV")) %>%
-  transmute(
-    variable = str_remove(variable, " date collected"),
-    date     = as.Date(as.numeric(other_details), origin = "1899-12-30")
-  )
+# ---- 4. Field observation inventory, from the "Plant sampling notes" sheet -
+# One row per sampling event in the metadata (date + Excel data file),
+# expanded to one row per field variable via the "units" sheet's
+# sampling_event column. "CV" variables are dropped (a summary stat of the
+# same collection event). Events with no data file yet are skipped.
 
-field_files <- site_files %>%
-  filter(str_detect(variable, "data file")) %>%
-  transmute(
-    variable = str_remove(variable, " data file"),
-    file_name, file_path
-  )
+plant_files <- read_excel(metadata_path, sheet = "Plant sampling notes") %>%
+  filter(Site == site_name, Year == season_year, !is.na(data_file))
 
-field_inventory <- field_dates %>%
-  left_join(field_files, by = "variable") %>%
-  mutate(source = "field") %>%
-  select(date, source, variable, file_name, file_path)
+field_inventory <- read_excel(metadata_path, sheet = "units") %>%
+  filter(!str_detect(variable_clm_name, "CV")) %>%
+  select(variable = variable_clm_name, sampling_event) %>%
+  inner_join(plant_files, by = "sampling_event") %>%
+  transmute(date      = as.Date(date),
+            source    = "field",
+            variable,
+            file_name = basename(data_file),
+            file_path = data_file)
 
 field_inventory
 
@@ -239,7 +235,7 @@ timeline_data <- site_inventory %>%
 
 # Sowing/harvest dates for reference lines (same source as Script 5's ANOVA plot)
 season_2025 <- read_excel(metadata_path, sheet = "seasons") %>%
-  filter(Site == site_name, Year == 2025)
+  filter(Site == site_name, Year == season_year)
 
 sowing_date  <- as.Date(season_2025$`Sowing date`)
 harvest_date <- as.Date(season_2025$`Harvest date`)
@@ -301,3 +297,4 @@ site_inventory %>%
   group_by(source) %>%
   summarise(first = min(date), last = max(date), n = n(),
             in_season = sum(date >= sowing_date & date <= harvest_date))
+
