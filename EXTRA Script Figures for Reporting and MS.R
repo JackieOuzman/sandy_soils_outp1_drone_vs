@@ -36,7 +36,8 @@ library(terra)
 #site_name     <- "1.Walpeup_MRS125"
 #site_name     <- "2.Crystal_Brook_Brians_House"
 #site_name     <- "3.Wynarka_Mervs_West"
-site_name     <- "4.Wharminda_Woodys"
+#site_name     <- "4.Wharminda_Woodys"
+site_name     <- "5.Walpeup_Gums"
 
 
 base_path     <- "H:/Output-1"
@@ -216,6 +217,17 @@ table_s1
 readr::write_csv(table_s1,
                  file.path(output_folder, paste0(site_name, "_table_S1_anova_full_MS.csv")))
 
+
+## Check
+table_3_1
+
+# Significant dates (for the 3.2 table)
+anova_plot_data %>%
+  filter(p.value < 0.05) %>%
+  arrange(date) %>%
+  group_by(source, metric) %>%
+  summarise(n_sig = n(), sig_dates = paste(format(date, "%d %b"), collapse = ", "), .groups = "drop") %>%
+  pull(sig_dates, name = paste(source, metric)) %>% print()
 
 ######### STOP ##################################################################
 
@@ -421,7 +433,8 @@ res_means <- bind_rows(
   m_sat %>% transmute(date_drone, treatment_name, source = "Sentinel-2", date = date_satellite, ndvi = mean_satellite),
   m_pla %>% transmute(date_drone, treatment_name, source = "Planet",     date = date_planet,    ndvi = mean_planet)
 ) %>%
-  mutate(flight = paste("Drone flight", format(date_drone, "%d %b")))
+  mutate(flight = paste("Drone flight", format(date_drone, "%d %b")),
+         flight = factor(flight, levels = unique(flight[order(date_drone)])))   # panels in date order
 
 # F-statistic for each source on its matched date (NDVI, from Section 4's anova_results)
 res_F <- res_means %>%
