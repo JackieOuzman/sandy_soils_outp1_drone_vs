@@ -70,6 +70,8 @@ metadata_path <- file.path(base_path, "0.Site-info",
 pipeline_output_base <- "H:/Output-1/Jackie notes processing etc/Drone_Vs_Satellite"
 output_folder         <- file.path(pipeline_output_base, site_name)
 
+season_year <- 2025   # which Year to read from the "Plant sampling notes" sheet
+
 
 # No row spacing, cut lengths or dates here any more:
 # - values come already converted (plants/m2, kg/ha, ...) from each file's
@@ -102,47 +104,45 @@ strips_clean <- strips %>%
 zones_labelled <- readRDS(file.path(output_folder, paste0(site_name, "_zones_labelled_script1.rds")))
 zones_labelled <- st_make_valid(zones_labelled)
 
+
 # ---- 2. Field variables for this site, from the metadata ------------------
-# One row per variable: Excel data file + sheet, point shapefile, units and
-# sampling date. Sheet defaults to "Jackie" unless the metadata's "sheet name"
-# column says otherwise (only needed for workbooks shared between sites).
-# Variable names come from the metadata "units" sheet and must match the
-# Jackie sheet column headings exactly.
+# Files and dates come from the "Plant sampling notes" sheet: one row per
+# Site x Year x sampling_event (Establishment, Biomass_flowering, Harvest),
+# giving the Excel data file, its sheet, the point shapefile and the date.
+# The "units" sheet maps each variable to its sampling_event and units.
+# Variable names must match the Jackie sheet column headings exactly; a
+# variable whose column isn't in that sheet is skipped (Section 3).
+
+plant_files <- read_excel(metadata_path, sheet = "Plant sampling notes") %>%
+  filter(Site == site_name, Year == season_year) %>%
+  transmute(sampling_event,
+            date_sampled = as.Date(date),
+            data_path    = data_file,
+            sheet        = coalesce(sheet_name, "Jackie"),
+            shp_path     = shp_file)
 
 units_lookup <- read_excel(metadata_path, sheet = "units") %>%
-  select(variable = variable_clm_name, units = variable_units) %>%
+  select(variable = variable_clm_name, units = variable_units, sampling_event) %>%
   filter(variable != "Establishment CV")          # not used downstream
 
-field_dates <- readRDS(file.path(output_folder, paste0(site_name, "_site_inventory_script1.rds"))) %>%
-  filter(source == "field") %>%
-  distinct(variable, date_sampled = date)
-
-path_for <- function(var, suffix, col = "file path") {
-  x <- site_files[[col]][site_files$variable == paste(var, suffix)]
-  if (length(x) == 0) NA_character_ else as.character(x[1])
-}
-
 field_vars <- units_lookup %>%
-  rowwise() %>%
-  mutate(data_path = path_for(variable, "data file"),
-         sheet     = path_for(variable, "data file", col = "sheet name"),
-         shp_path  = path_for(variable, "shp file")) %>%
-  ungroup() %>%
-  mutate(sheet = coalesce(sheet, "Jackie")) %>%
-  left_join(field_dates, by = "variable") %>%
-  filter(!is.na(data_path), !is.na(shp_path))    # e.g. no Protein at Walpeup
+  left_join(plant_files, by = "sampling_event") %>%
+  filter(!is.na(data_path), !is.na(shp_path))    # skip events with no files yet
 
-field_vars %>% select(variable, sheet, date_sampled, units)
-
-
+field_vars %>% select(variable, sampling_event, sheet, date_sampled, units)
 # ---- 3. Reader: one variable = Jackie sheet value + point location ---------
 # Values come already converted (plants/m2, kg/ha, ...) - no calculation here.
 # Treatment and zone are assigned by POINT LOCATION (spatial join), not by
 # the shapefile's own attributes.
 
 read_field_variable <- function(var, data_path, sheet, shp_path, date_sampled, units) {
-  values <- read_excel(file.path(base_path, site_name, data_path), sheet = sheet) %>%
-    rename_with(trimws) %>%
+  raw <- read_excel(file.path(base_path, site_name, data_path), sheet = sheet) %>%
+    rename_with(trimws)
+  if (!var %in% names(raw)) {                      # e.g. no Protein column at Walpeup
+    message("Skipping ", var, ": no column of that name in ", basename(data_path))
+    return(NULL)
+  }
+  values <- raw %>%
     select(pt_id, value = all_of(var)) %>%
     filter(!is.na(pt_id)) %>%
     mutate(value = as.numeric(value))
@@ -157,10 +157,10 @@ read_field_variable <- function(var, data_path, sheet, shp_path, date_sampled, u
 
 
 # ---- 4. Read every variable and check ---------------------------------------
-field_points <- do.call(rbind, lapply(seq_len(nrow(field_vars)), function(i) {
+field_points <- do.call(rbind, Filter(Negate(is.null), lapply(seq_len(nrow(field_vars)), function(i) {
   v <- field_vars[i, ]
   read_field_variable(v$variable, v$data_path, v$sheet, v$shp_path, v$date_sampled, v$units)
-}))
+})))   # Filter() drops variables skipped by the reader
 
 # Points outside the analysed treatment strips are excluded from all
 # point-level analysis (e.g. Mervs West: 21 points in the original control
